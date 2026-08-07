@@ -1,0 +1,1295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DualBook — Owner Console</title>
+<!--
+  THE OWNER'S CONSOLE. Five real sections, each answering a different question:
+
+    Overview   what is happening right now
+    Bookings   the job list — filter it, and change a booking's state
+    Customers  who these people are (the memory layer's own table)
+    Analytics  is this working, and what is it worth
+    Settings   the business's own configuration, which the agent then obeys
+
+  Nobody books anything here. Customers book at /book, which is a separate page
+  written for a separate person. Everything below is read from the same SQLite
+  file the agents write to — there is not a single hardcoded figure in it.
+-->
+<style>
+/* ============================================================
+   DESIGN SYSTEM — the same tokens book.html uses, so the console
+   and the customer page are visibly one product. The sidebar
+   gradient is the customer page's hero gradient, deliberately.
+   ============================================================ */
+:root{
+  --violet-900:#2E1065; --violet-800:#3B0F76; --violet-700:#5B21B6;
+  --violet-600:#6D28D9; --violet-500:#7C3AED; --violet-400:#A78BFA;
+  --violet-100:#EDE9FE; --violet-50:#F5F3FF;
+  --pink-600:#DB2777; --pink-500:#EC4899; --pink-400:#F472B6; --pink-50:#FDF2F8;
+  --green:#22c55e; --green-700:#15803d; --blue:#3b82f6; --purple:#7C3AED;
+  --amber:#f59e0b; --red:#ef4444;
+
+  --bg:#EEECF8; --card:#FFFFFF; --ink:#1B1736; --muted:#6E6A8A; --line:#EDEAF7;
+  --soft:#F7F6FD;
+
+  /* Aliases, so every existing rule picks up the new palette untouched. */
+  --brand-1:#6D28D9; --brand-2:#EC4899;
+  --radius:16px;
+  --shadow:0 1px 2px rgba(27,23,54,.05),0 6px 20px -8px rgba(27,23,54,.12);
+  --grad-brand:linear-gradient(135deg,var(--violet-600),var(--violet-500) 55%,#8B5CF6);
+  --grad-hot:linear-gradient(135deg,var(--pink-500),#C026D3);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter','Segoe UI',system-ui,-apple-system,Roboto,sans-serif;background:var(--bg);
+  color:var(--ink);-webkit-font-smoothing:antialiased;font-feature-settings:'cv02','cv03','ss01'}
+h1,h2,h3,h4{letter-spacing:-.022em}
+.app{display:flex;min-height:100vh}
+
+/* ---------- Sidebar ---------- */
+.sidebar{width:250px;flex-shrink:0;
+  background:linear-gradient(165deg,#2E1065,#4C1D95 45%,#6D28D9);
+  color:#fff;padding:22px 18px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.logo{display:flex;gap:12px;align-items:center;margin-bottom:26px}
+.logo-mark{width:44px;height:44px;border-radius:13px;background:rgba(255,255,255,.16);
+  display:grid;place-items:center}
+.logo-mark svg{width:24px;height:24px}
+.logo h1{font-size:20px;font-weight:700;letter-spacing:-.2px}
+.logo p{font-size:11px;opacity:.8;margin-top:1px}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav a{display:flex;align-items:center;gap:13px;padding:12px 14px;border-radius:12px;
+  color:rgba(255,255,255,.86);text-decoration:none;font-size:14.5px;font-weight:500;transition:.15s;cursor:pointer}
+.nav a:hover{background:rgba(255,255,255,.12);color:#fff}
+.nav a.active{background:#fff;color:var(--violet-600);font-weight:650;
+  box-shadow:0 8px 20px -8px rgba(0,0,0,.45)}
+.nav .ico{width:20px;text-align:center;font-size:16px}
+.nav .tag{margin-left:auto;font-size:10.5px;background:rgba(255,255,255,.22);padding:2px 7px;border-radius:9px}
+.nav a.active .tag{background:var(--violet-100);color:var(--violet-600)}
+.nav-sep{height:1px;background:rgba(255,255,255,.2);margin:12px 6px}
+.side-art{margin-top:auto;padding:18px 4px;opacity:.92}
+.side-art svg{width:100%;height:auto;display:block}
+[data-i] svg,.ico svg,.stat-ico svg,.conv-ico svg,.insight-ico svg,
+.action .ai svg,.chan svg,.dot svg,.cust svg{display:block;width:1em;height:1em}
+.dot svg{width:10px;height:10px}
+.stat-ico svg{width:26px;height:26px}
+.conv-ico svg{width:20px;height:20px}
+.insight-ico svg{width:18px;height:18px}
+.chan svg{width:16px;height:16px}
+.user-card{background:rgba(255,255,255,.14);border-radius:14px;padding:11px;display:flex;
+  align-items:center;gap:11px}
+.avatar{width:38px;height:38px;border-radius:11px;background:rgba(255,255,255,.25);
+  display:grid;place-items:center;font-weight:700;font-size:13px}
+.user-card b{font-size:13.5px;display:block}
+.user-card span{font-size:11px;opacity:.8}
+
+/* ---------- Layout ---------- */
+.main{flex:1;padding:26px 30px;min-width:0}
+.topbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:24px}
+.greeting h2{font-size:26px;font-weight:700;letter-spacing:-.4px}
+.greeting p{color:var(--muted);font-size:14px;margin-top:4px}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:12px;min-width:0}
+.datecard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 16px;
+  display:flex;align-items:center;gap:11px;box-shadow:var(--shadow)}
+.datecard b{font-size:13px;display:block}
+.datecard span{font-size:12px;color:var(--muted)}
+.icon-btn{position:relative;width:46px;height:46px;border-radius:12px;background:#fff;border:1px solid var(--line);
+  display:grid;place-items:center;font-size:18px;cursor:pointer;box-shadow:var(--shadow)}
+.badge-dot{position:absolute;top:-5px;right:-5px;background:var(--pink-500);color:#fff;font-size:10px;
+  font-weight:700;min-width:19px;height:19px;border-radius:10px;display:grid;place-items:center;border:2px solid #fff}
+
+.view{display:none}
+.view.on{display:block;animation:fade .16s ease-out}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ---------- Cards / grids ---------- */
+/* 200px, not 230px: five cards then fit on one row on a 1440px screen instead
+   of stranding the fifth on a line of its own. */
+.grid-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px;margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.stat{padding:20px;display:flex;gap:15px;align-items:center}
+.stat-ico{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;flex-shrink:0}
+.stat-label{font-size:13px;color:var(--muted);font-weight:600}
+.stat-value{font-size:25px;font-weight:800;letter-spacing:-.03em;margin:2px 0 4px}
+.trend{font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px}
+.trend.up{color:var(--green)} .trend.down{color:var(--red)} .trend.flat{color:var(--muted)}
+.trend small{color:var(--muted);font-weight:500}
+.columns{display:grid;grid-template-columns:1.75fr 1fr;gap:20px;align-items:start}
+@media(max-width:1400px){.columns{grid-template-columns:1fr}}
+.columns>*,.stack>*,.card,.grid2>*{min-width:0}
+.stack{display:flex;flex-direction:column;gap:20px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+.card-head{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.card-head h3{font-size:16.5px;font-weight:700}
+.card-head p{font-size:12.5px;color:var(--muted);margin-top:2px}
+.card-head .right{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.link{color:var(--violet-600);font-size:13px;font-weight:600;text-decoration:none;cursor:pointer}
+.tabs{display:flex;background:var(--soft);border-radius:10px;padding:3px;gap:2px}
+.tab{border:0;background:transparent;padding:7px 14px;border-radius:8px;font-size:12.5px;
+  font-weight:600;color:var(--muted);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px}
+.tab.active{background:#fff;color:var(--violet-600);box-shadow:0 1px 3px rgba(27,23,54,.12)}
+
+/* ---------- Forms & buttons ---------- */
+.fld,select.fld{border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13.5px;
+  font-family:inherit;outline:0;color:var(--ink);background:#fff;min-width:0;max-width:100%}
+.fld:focus{border-color:var(--violet-400);box-shadow:0 0 0 4px rgba(124,58,237,.14)}
+label.lbl{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.4px;display:block;margin-bottom:6px}
+.btn{border:0;border-radius:10px;padding:10px 15px;font-size:13.5px;font-weight:600;font-family:inherit;
+  cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:.15s;white-space:nowrap}
+.btn:hover:not(:disabled){filter:brightness(1.06)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn svg{width:1.05em;height:1.05em}
+.btn-primary{background:var(--grad-brand);color:#fff}
+.btn-ghost{background:var(--soft);color:#5B5680}
+.btn-danger{background:var(--pink-50);color:var(--pink-600)}
+.btn-ok{background:#F0FDF4;color:var(--green-700)}
+.btn-sm{padding:6px 11px;font-size:12px;border-radius:9px}
+.filters{display:flex;gap:10px;padding:14px 20px;border-bottom:1px solid var(--line);
+  flex-wrap:wrap;align-items:flex-end;background:var(--soft)}
+.filters .grow{flex:1 1 200px}
+.switch{display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13.5px}
+.switch input{appearance:none;width:42px;height:24px;border-radius:20px;background:#D6D2E8;
+  position:relative;cursor:pointer;transition:.18s;flex-shrink:0}
+.switch input:checked{background:var(--green)}
+.switch input::after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+  background:#fff;transition:.18s}
+.switch input:checked::after{transform:translateX(18px)}
+
+/* ---------- Conversations ---------- */
+.conv-list{padding:16px 20px;display:flex;flex-direction:column;gap:12px;min-height:130px}
+.conv{display:flex;gap:13px;padding:15px;border:1px solid var(--line);border-radius:14px}
+.conv-ico{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-size:19px;flex-shrink:0}
+.conv-body{flex:1;min-width:0}
+.conv-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.conv-top b{font-size:14.5px}
+.conv-time{margin-left:auto;font-size:12px;color:var(--muted)}
+.conv-msg{font-size:13.5px;color:#475569;margin:6px 0 9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conv-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dots{display:flex;gap:5px}
+.dot{width:17px;height:17px;border-radius:50%;display:grid;place-items:center;font-size:9px;
+  background:#E4E0F2;color:transparent}
+.dot.on{background:var(--green);color:#fff}
+.dot.on.voice{background:var(--purple)}
+.slots-text{font-size:12px;color:var(--muted);font-weight:500}
+.pill{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px}
+.pill-returning{background:#F0FDF4;color:var(--green-700)}
+.pill-new{background:var(--violet-100);color:var(--violet-600)}
+.pill-active{background:#F0FDF4;color:var(--green-700);margin-left:auto}
+.empty{text-align:center;padding:34px 20px;color:var(--muted);font-size:13.5px}
+.empty .big{margin-bottom:10px;opacity:.4;color:var(--violet-500)}
+.empty .big svg{width:34px;height:34px;margin:0 auto;display:block}
+
+/* ---------- Tables ---------- */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;padding:12px 14px;color:var(--muted);font-size:12px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--line);white-space:nowrap}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--ink)}
+th .arrow{opacity:.45;font-size:10px}
+td{padding:13px 14px;border-bottom:1px solid var(--soft);vertical-align:middle}
+td.nw{white-space:nowrap}
+th:first-child,td:first-child{padding-left:20px}
+th:last-child,td:last-child{padding-right:20px}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--soft)}
+tbody tr.clickable{cursor:pointer}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;max-width:220px}
+.cust{display:flex;align-items:center;gap:11px;min-width:0}
+.cust-av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+  font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
+.cust b{font-size:13.5px;display:block}
+.cust span{font-size:11.5px;color:var(--muted);display:block}
+.status{font-size:11.5px;font-weight:700;padding:5px 12px;border-radius:20px;display:inline-block;white-space:nowrap}
+.status.confirmed{background:var(--violet-100);color:var(--violet-600)}
+.status.completed{background:#F0FDF4;color:var(--green-700)}
+.status.cancelled{background:var(--pink-50);color:var(--pink-600)}
+.chan{width:30px;height:30px;border-radius:9px;display:grid;place-items:center}
+.chan.wa{background:#F0FDF4;color:#16a34a}
+.chan.voice{background:var(--violet-100);color:var(--violet-600)}
+.pager{display:flex;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid var(--line);
+  font-size:13px;color:var(--muted);flex-wrap:wrap}
+.pager .right{margin-left:auto;display:flex;gap:8px}
+
+/* ---------- Insights / charts ---------- */
+.insight{display:flex;gap:13px;padding:13px 20px;align-items:flex-start}
+.insight-ico{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-size:17px;flex-shrink:0}
+.insight b{font-size:13.5px;display:block;line-height:1.45}
+.insight span{font-size:12px;color:var(--muted)}
+.chart-wrap{padding:18px 20px}
+.chart-wrap svg{width:100%;overflow:visible}
+.gridline{stroke:#EFECF9;stroke-width:1}
+.axis{font-size:10.5px;fill:#A29DBE}
+.spark-line{fill:none;stroke:var(--violet-500);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.spark-pt{fill:#fff;stroke:var(--violet-500);stroke-width:2.5}
+.peak{fill:var(--violet-600)}
+.peak-txt{fill:#fff;font-size:11px;font-weight:700;text-anchor:middle}
+.legend{display:flex;gap:16px;padding:0 20px 16px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px}
+.bars{padding:6px 20px 18px}
+.bar-row{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:13px}
+.bar-row .nm{width:120px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Both are <span>s, so they need display:block — width and height do nothing on
+   an inline box, and the bars render as empty tracks. */
+.bar-track{display:block;flex:1;height:9px;border-radius:6px;background:#EFECF9;overflow:hidden}
+.bar-fill{display:block;height:100%;border-radius:6px;
+  background:linear-gradient(90deg,var(--violet-500),var(--pink-500))}
+.bar-row .vl{width:110px;text-align:right;color:var(--muted);font-size:12.5px;flex-shrink:0}
+
+/* The headline impact panel. */
+.impact{padding:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:18px}
+.impact .big{font-size:32px;font-weight:800;letter-spacing:-.8px;line-height:1.1}
+.impact .cap{font-size:12.5px;color:var(--muted);margin-top:4px}
+.impact .sub{font-size:11.5px;color:var(--muted);margin-top:7px}
+.impact .good{color:var(--green-700)}
+.note-line{padding:0 20px 16px;font-size:12px;color:var(--muted)}
+
+/* ---------- Drawer ---------- */
+.scrim{position:fixed;inset:0;background:rgba(15,23,42,.42);opacity:0;pointer-events:none;
+  transition:.2s;z-index:60}
+.scrim.on{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;height:100vh;width:min(520px,100%);background:#fff;z-index:61;
+  transform:translateX(100%);transition:.24s cubic-bezier(.4,0,.2,1);overflow-y:auto;
+  box-shadow:-12px 0 40px rgba(15,23,42,.16)}
+.drawer.on{transform:none}
+.drawer-head{display:flex;align-items:center;gap:14px;padding:22px 24px;border-bottom:1px solid var(--line);
+  position:sticky;top:0;background:#fff;z-index:1}
+.drawer-head h3{font-size:18px;font-weight:700}
+.drawer-head p{font-size:12.5px;color:var(--muted)}
+.drawer-body{padding:20px 24px 40px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;font-size:13.5px;margin-bottom:22px}
+.kv dt{color:var(--muted)} .kv dd{font-weight:600;text-align:right;overflow-wrap:anywhere}
+.mini-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.5px;margin:22px 0 10px}
+.hist{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:9px;font-size:13px}
+.hist .top{display:flex;align-items:center;gap:9px}
+.hist .top b{font-size:13.5px}
+.hist .meta{color:var(--muted);font-size:12px;margin-top:4px}
+.msg-row{border-left:3px solid var(--line);padding:8px 0 8px 12px;margin-bottom:10px;font-size:12.5px}
+.msg-row .who{color:var(--muted);font-size:11.5px;margin-bottom:3px}
+
+/* ---------- Settings ---------- */
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;padding:20px}
+.form-row{padding:16px 20px;border-bottom:1px solid var(--line)}
+.form-row:last-child{border-bottom:0}
+.svc-row,.hour-row{display:flex;gap:10px;align-items:center;padding:8px 0;flex-wrap:wrap}
+.svc-row input[data-f="name"]{flex:1 1 150px}
+.svc-row input[data-f="description"]{flex:2 1 220px}
+.svc-row input[data-f="price"],.svc-row input[data-f="minutes"]{width:96px}
+.hour-row .day{width:110px;font-size:13.5px;font-weight:600}
+.hour-row input[type=time]{width:120px}
+.save-bar{display:flex;gap:12px;align-items:center;padding:16px 20px;border-top:1px solid var(--line);
+  position:sticky;bottom:0;background:#fff;border-radius:0 0 var(--radius) var(--radius);flex-wrap:wrap}
+.save-bar .msg{font-size:13px;color:var(--muted)}
+.save-bar .msg.err{color:var(--pink-600)}
+.save-bar .msg.ok{color:var(--green-700)}
+.sysline{display:flex;justify-content:space-between;gap:12px;padding:9px 0;font-size:13.5px;
+  border-bottom:1px solid var(--soft)}
+.sysline:last-child{border-bottom:0}
+.sysline b{font-weight:600}
+.sysline .v{color:var(--muted);text-align:right;overflow-wrap:anywhere}
+.badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px}
+.badge.live{background:#F0FDF4;color:var(--green-700)}
+.badge.sim{background:#FFFBEB;color:#b45309}
+.badge.off{background:var(--soft);color:var(--muted)}
+
+/* Status glyphs for the WhatsApp checks. Inline SVG in a coloured disc rather
+   than emoji, which render differently on every OS and can't be themed. */
+.chk{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;
+  vertical-align:-4px;margin-right:7px;color:#fff}
+.chk svg{width:11px;height:11px}
+.chk.ok{background:var(--green)}
+.chk.no{background:var(--pink-500)}
+.chk.warn{background:var(--amber)}
+
+.toast{position:fixed;bottom:24px;right:24px;background:var(--ink);color:#fff;padding:13px 20px;
+  border-radius:12px;font-size:13.5px;box-shadow:0 10px 30px rgba(0,0,0,.2);opacity:0;
+  transform:translateY(12px);transition:.25s;pointer-events:none;z-index:99;max-width:420px}
+.toast.show{opacity:1;transform:translateY(0)}
+
+@media(max-width:1000px){.main{padding:20px 18px}}
+@media(max-width:960px){
+  .app{flex-direction:column}
+  .sidebar{width:100%;height:auto;position:static;padding:16px 18px}
+  .sidebar .nav{flex-direction:row;flex-wrap:wrap;gap:6px}
+  .sidebar .nav a{padding:9px 12px;font-size:13.5px}
+  .nav-sep{display:none} .side-art{display:none}
+  .user-card{margin-top:14px} .datecard{display:none}
+  .greeting h2{font-size:22px}
+}
+@media(max-width:560px){.grid-stats{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-mark" data-i="drop"></div>
+      <div><h1 id="sideBiz">DualBook</h1><p>Owner console</p></div>
+    </div>
+    <nav class="nav" id="nav">
+      <a data-view="overview" class="active"><span class="ico" data-i="home"></span> Overview</a>
+      <a data-view="bookings"><span class="ico" data-i="calendar"></span> Bookings <span class="tag" id="tagBookings"></span></a>
+      <a data-view="customers"><span class="ico" data-i="users"></span> Customers <span class="tag" id="tagCustomers"></span></a>
+      <a data-view="analytics"><span class="ico" data-i="chart"></span> Analytics</a>
+      <a data-view="settings"><span class="ico" data-i="gear"></span> Settings</a>
+      <div class="nav-sep"></div>
+      <a href="/book" target="_blank" rel="noopener"><span class="ico" data-i="mic"></span> Customer page ↗</a>
+    </nav>
+    <div class="side-art" id="sideArt"></div>
+    <div class="user-card">
+      <div class="avatar">AD</div>
+      <div><b>Admin User</b><span>Owner</span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="greeting">
+        <h2 id="pageTitle">Overview</h2>
+        <p id="pageSub">What's happening with your car wash today.</p>
+      </div>
+      <div class="topbar-right">
+        <div class="icon-btn" onclick="toast(notifText)"><span data-i="bell"></span>
+          <span class="badge-dot" id="notifCount">0</span></div>
+        <div class="datecard">
+          <span data-i="sun" style="font-size:21px;color:var(--amber)"></span>
+          <div><b id="today">—</b><span id="clock">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== OVERVIEW ===================== -->
+    <section class="view on" id="view-overview">
+      <section class="grid-stats" id="stats"></section>
+      <div class="columns">
+        <div class="stack">
+          <section class="card">
+            <div class="card-head">
+              <div><h3>Live Conversations</h3><p>Agents talking to customers right now</p></div>
+              <div class="right tabs">
+                <button class="tab active" data-ch="all" onclick="setChannel('all')">All</button>
+                <button class="tab" data-ch="whatsapp" onclick="setChannel('whatsapp')"><i data-i="chat"></i> WhatsApp</button>
+                <button class="tab" data-ch="voice" onclick="setChannel('voice')"><i data-i="mic"></i> Voice</button>
+              </div>
+            </div>
+            <div class="conv-list" id="convList"></div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div><h3>Today's Schedule</h3><p id="todayCount">—</p></div>
+              <div class="right"><a class="link" onclick="go('bookings')">All bookings →</a></div>
+            </div>
+            <div class="tbl-wrap"><table><tbody id="todayRows"></tbody></table></div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="card">
+            <div class="card-head"><h3>Booking Trend</h3><p style="margin-left:6px">(Last 7 days)</p></div>
+            <div class="chart-wrap"><svg id="chart" viewBox="0 0 460 190"></svg></div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div style="display:flex;gap:12px;align-items:center">
+                <div class="insight-ico" style="background:#ede9fe;color:#7c3aed;font-size:19px" data-i="brain"></div>
+                <div><h3>Customer Memory</h3><p>What the agent remembers</p></div>
+              </div>
+            </div>
+            <div id="insightList" style="padding:8px 0 16px"></div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div><h3>Confirmations</h3><p id="waMode">—</p></div>
+              <div class="right"><a class="link" onclick="go('settings')">Set up →</a></div>
+            </div>
+            <div id="outboxList" style="padding:6px 20px 16px"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== BOOKINGS ===================== -->
+    <section class="view" id="view-bookings">
+      <section class="card">
+        <div class="card-head">
+          <div><h3>All Bookings</h3><p id="bkSummary">—</p></div>
+          <div class="right">
+            <button class="btn btn-ghost btn-sm" onclick="resetFilters()">Clear filters</button>
+            <button class="btn btn-primary btn-sm" onclick="exportCsv()"><span data-i="file"></span> Export CSV</button>
+          </div>
+        </div>
+        <div class="filters">
+          <div class="grow">
+            <label class="lbl" for="fSearch">Search</label>
+            <input class="fld" id="fSearch" style="width:100%" placeholder="Name, phone, vehicle…">
+          </div>
+          <div><label class="lbl" for="fChannel">Channel</label>
+            <select class="fld" id="fChannel"><option value="all">All</option>
+              <option value="whatsapp">WhatsApp</option><option value="voice">Voice</option></select></div>
+          <div><label class="lbl" for="fStatus">Status</label>
+            <select class="fld" id="fStatus"><option value="all">All</option></select></div>
+          <div><label class="lbl" for="fService">Service</label>
+            <select class="fld" id="fService"><option value="all">All</option></select></div>
+          <div><label class="lbl" for="fFrom">From</label><input class="fld" id="fFrom" type="date"></div>
+          <div><label class="lbl" for="fTo">To</label><input class="fld" id="fTo" type="date"></div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr>
+              <th class="sortable" data-sort="customer">Customer <span class="arrow"></span></th>
+              <th>Vehicle</th><th>Service</th>
+              <th class="sortable" data-sort="date">Date &amp; Time <span class="arrow"></span></th>
+              <th class="sortable" data-sort="channel">Channel <span class="arrow"></span></th>
+              <th class="sortable" data-sort="status">Status <span class="arrow"></span></th>
+              <th>Actions</th>
+            </tr></thead>
+            <tbody id="bookingRows"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span id="pageInfo">—</span>
+          <div class="right">
+            <button class="btn btn-ghost btn-sm" id="prevPage" onclick="page(-1)">← Previous</button>
+            <button class="btn btn-ghost btn-sm" id="nextPage" onclick="page(1)">Next →</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ===================== CUSTOMERS ===================== -->
+    <section class="view" id="view-customers">
+      <section class="card">
+        <div class="card-head">
+          <div><h3>Customers</h3><p>One row per person — the profile the agent recalls</p></div>
+          <div class="right"><input class="fld" id="cSearch" placeholder="Search customers…"></div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr>
+              <th>Customer</th><th>Vehicle</th><th>Usual service</th><th>Prefers</th>
+              <th>Bookings</th><th>Value</th><th>Channels</th><th>Last seen</th>
+            </tr></thead>
+            <tbody id="customerRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- ===================== ANALYTICS ===================== -->
+    <section class="view" id="view-analytics">
+      <section class="card" style="margin-bottom:20px">
+        <div class="card-head">
+          <div><h3>What the memory layer is worth</h3>
+            <p>Turns a customer spends booking, with a profile vs without</p></div>
+          <div class="right tabs" id="rangeTabs">
+            <button class="tab" data-days="7" onclick="setRange(7)">7 days</button>
+            <button class="tab active" data-days="30" onclick="setRange(30)">30 days</button>
+            <button class="tab" data-days="90" onclick="setRange(90)">90 days</button>
+          </div>
+        </div>
+        <div class="impact" id="impact"></div>
+        <div class="note-line" id="impactNote"></div>
+      </section>
+
+      <section class="card" style="margin-bottom:20px">
+        <div class="card-head"><h3>Bookings per day</h3><p id="seriesSub">—</p></div>
+        <div class="chart-wrap"><svg id="stackChart" viewBox="0 0 900 260"></svg></div>
+        <div class="legend">
+          <span><i style="background:#22c55e"></i>WhatsApp</span>
+          <span><i style="background:#7C3AED"></i>Voice</span>
+        </div>
+      </section>
+
+      <div class="grid2">
+        <section class="card">
+          <div class="card-head"><h3>Service mix</h3><p id="revSub">—</p></div>
+          <div class="bars" id="serviceBars"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h3>When customers want to come in</h3></div>
+          <div class="bars" id="todBars"></div>
+          <div class="card-head" style="border-top:1px solid var(--line)"><h3>Booking status</h3></div>
+          <div class="bars" id="statusBars"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ===================== SETTINGS ===================== -->
+    <section class="view" id="view-settings">
+      <div class="grid2" style="align-items:start">
+        <div class="stack">
+          <section class="card">
+            <div class="card-head"><h3>Your business</h3><p>Used by the agent on every conversation</p></div>
+            <div class="form-grid">
+              <div><label class="lbl" for="sName">Business name</label>
+                <input class="fld" id="sName" style="width:100%"></div>
+              <div><label class="lbl" for="sPhone">Business phone</label>
+                <input class="fld" id="sPhone" style="width:100%"></div>
+              <div style="grid-column:1/-1"><label class="lbl" for="sAddr">Address</label>
+                <input class="fld" id="sAddr" style="width:100%"></div>
+              <div><label class="lbl" for="sCurrency">Currency</label>
+                <input class="fld" id="sCurrency" style="width:100%"></div>
+              <div><label class="lbl" for="sWindow">Booking window (days ahead)</label>
+                <input class="fld" id="sWindow" type="number" min="1" max="365" style="width:100%"></div>
+              <div style="grid-column:1/-1"><label class="lbl" for="sPersona">Agent style</label>
+                <input class="fld" id="sPersona" style="width:100%"
+                  placeholder="e.g. Warm, brief and local. Never pushy about upsells."></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h3>Service menu</h3>
+              <div class="right"><button class="btn btn-ghost btn-sm" onclick="addService()">+ Add service</button></div>
+            </div>
+            <div class="form-row" id="serviceRows"></div>
+            <div class="note-line">The agent quotes these prices and will not accept a service that isn't on this list.</div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h3>Opening hours</h3><p>The agent refuses slots outside them</p></div>
+            <div class="form-row" id="hourRows"></div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="card">
+            <div class="card-head"><h3>WhatsApp confirmations</h3>
+              <span class="right badge" id="waBadge">—</span></div>
+            <div class="form-row">
+              <label class="switch"><input type="checkbox" id="sConfirm">
+                <span>Send a WhatsApp confirmation after every booking</span></label>
+            </div>
+            <div class="form-row">
+              <label class="lbl" for="sTemplate">Message template</label>
+              <textarea class="fld" id="sTemplate" rows="4" style="width:100%;resize:vertical"></textarea>
+              <div class="note-line" style="padding:8px 0 0">
+                Placeholders: {name} {business} {service} {date} {time} {vehicle} {id}
+              </div>
+            </div>
+            <div class="form-row">
+              <label class="lbl" for="sTestPhone">Check a number before you trust it</label>
+              <div style="display:flex;gap:9px;flex-wrap:wrap">
+                <input class="fld" id="sTestPhone" placeholder="0300 123 4567" style="flex:1 1 160px">
+                <button class="btn btn-ghost btn-sm" onclick="checkNumber()">Validate</button>
+                <button class="btn btn-primary btn-sm" onclick="sendTest()">Send test</button>
+              </div>
+              <div class="note-line" id="waCheck" style="padding:10px 0 0"></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head"><h3>System</h3><p>Developer configuration, from .env</p></div>
+            <div class="form-row" id="sysInfo"></div>
+          </section>
+        </div>
+      </div>
+
+      <section class="card" style="margin-top:20px">
+        <div class="save-bar">
+          <button class="btn btn-primary" onclick="saveSettings()"><span data-i="check"></span> Save settings</button>
+          <button class="btn btn-ghost" onclick="loadSettings()">Discard changes</button>
+          <span class="msg" id="saveMsg"></span>
+        </div>
+      </section>
+    </section>
+  </main>
+</div>
+
+<div class="scrim" id="scrim" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div class="cust-av" id="dwAv" style="width:44px;height:44px;font-size:14px"></div>
+    <div><h3 id="dwName">—</h3><p id="dwSub">—</p></div>
+    <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="closeDrawer()">Close</button>
+  </div>
+  <div class="drawer-body" id="dwBody"></div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- Icons (inline; no CDN, works offline) ---------- */
+const S=(p,extra='')=>`<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor"
+  stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" ${extra}>${p}</svg>`;
+const ICONS={
+  home:S('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/>'),
+  chat:S('<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.9-.9L3 20.5l1.6-4.9A8.4 8.4 0 0 1 3.6 11a8.5 8.5 0 0 1 8.4-8.5 8.4 8.4 0 0 1 9 8.5z"/>'),
+  mic:S('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10.5a7 7 0 0 0 14 0"/><path d="M12 18.5V22"/>'),
+  calendar:S('<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+  users:S('<circle cx="9" cy="8" r="3.4"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16.5 5.2a3.4 3.4 0 0 1 0 6.6M18 20a6.4 6.4 0 0 0-2.3-5"/>'),
+  chart:S('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  gear:S('<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1A1.7 1.7 0 0 0 10 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z"/>'),
+  car:S('<path d="M5 17h14"/><path d="M4 17v-4.2L6 7h12l2 5.8V17"/><path d="M4 12.8h16"/><circle cx="7.5" cy="17.5" r="1.6"/><circle cx="16.5" cy="17.5" r="1.6"/>'),
+  brain:S('<path d="M12 5.5A3.2 3.2 0 0 0 5.9 4 2.9 2.9 0 0 0 4 9.2a3 3 0 0 0 .5 4.6 2.9 2.9 0 0 0 2.3 4.4A3.2 3.2 0 0 0 12 19.6z"/><path d="M12 5.5A3.2 3.2 0 0 1 18.1 4 2.9 2.9 0 0 1 20 9.2a3 3 0 0 1-.5 4.6 2.9 2.9 0 0 1-2.3 4.4A3.2 3.2 0 0 1 12 19.6z"/><path d="M12 5.5v14.1"/>'),
+  repeat:S('<path d="M17 2.5 21 6l-4 3.5"/><path d="M3 12V9.5a3.5 3.5 0 0 1 3.5-3.5H21"/><path d="M7 21.5 3 18l4-3.5"/><path d="M21 12v2.5a3.5 3.5 0 0 1-3.5 3.5H3"/>'),
+  clock:S('<circle cx="12" cy="12" r="9"/><path d="M12 7v5.3l3.4 2"/>'),
+  droplet:S('<path d="M12 2.7s6.5 6.6 6.5 11a6.5 6.5 0 0 1-13 0c0-4.4 6.5-11 6.5-11z"/>'),
+  drop:S('<path d="M12 2.6s6.6 6.7 6.6 11.1a6.6 6.6 0 0 1-13.2 0C5.4 9.3 12 2.6 12 2.6z"/><path d="M9.4 14.6a2.6 2.6 0 0 0 2.6 2.6"/>'),
+  moon:S('<path d="M20.5 14.2A8.6 8.6 0 0 1 9.8 3.5a8.7 8.7 0 1 0 10.7 10.7z"/>'),
+  file:S('<path d="M14 2.5H7a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7.5z"/><path d="M14 2.5v5h5"/><path d="M9 13h6M9 17h4"/>'),
+  bell:S('<path d="M18 8.5a6 6 0 1 0-12 0c0 6-2.5 7.5-2.5 7.5h17S18 14.5 18 8.5z"/><path d="M13.7 20a2 2 0 0 1-3.4 0"/>'),
+  sun:S('<circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M4.2 4.2l1.5 1.5M18.3 18.3l1.5 1.5M2 12h2M20 12h2M4.2 19.8l1.5-1.5M18.3 5.7l1.5-1.5"/>'),
+  check:S('<path d="m20 6.5-11 11-5-5"/>','stroke-width="3.4"'),
+  cash:S('<rect x="2.5" y="6" width="19" height="12" rx="3"/><circle cx="12" cy="12" r="2.6"/><path d="M6 10v4M18 10v4"/>'),
+  bolt:S('<path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/>'),
+  x:S('<path d="M6 6l12 12M18 6 6 18"/>'),
+};
+const SIDE_ART=`<svg viewBox="0 0 200 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <ellipse cx="100" cy="104" rx="72" ry="9" fill="rgba(255,255,255,.13)"/>
+  <path d="M38 88V68l12-22h60l16 22v20z" fill="rgba(255,255,255,.9)"/>
+  <path d="M55 50h48l11 16H48z" fill="rgba(124,58,237,.5)"/>
+  <circle cx="60" cy="88" r="9" fill="#1e293b"/><circle cx="60" cy="88" r="4" fill="#fff"/>
+  <circle cx="122" cy="88" r="9" fill="#1e293b"/><circle cx="122" cy="88" r="4" fill="#fff"/>
+  <g fill="rgba(255,255,255,.55)"><circle cx="158" cy="42" r="9"/><circle cx="172" cy="56" r="6"/>
+   <circle cx="150" cy="60" r="4.5"/><circle cx="40" cy="36" r="6"/><circle cx="28" cy="50" r="4"/></g>
+</svg>`;
+
+/* ---------- Helpers ---------- */
+const AV=['#7C3AED','#EC4899','#22C55E','#F59E0B','#6D28D9','#06B6D4','#DB2777'];
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const initials=n=>(n||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
+const colorFor=s=>AV[Math.abs([...String(s)].reduce((a,c)=>a+c.charCodeAt(0),0))%AV.length];
+const money=(n,cur)=>`${cur||''} ${Number(n||0).toLocaleString()}`.trim();
+function niceDate(iso){
+  if(!iso) return '—';
+  const d=new Date(String(iso).length<=10?iso+'T00:00:00':iso);
+  if(isNaN(d)) return iso;
+  return d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+}
+/* "9:30 AM" -> 570, for sorting a rota by clock time. A plain string sort puts
+   "1:00 PM" before "9:00 AM", which reads as a broken schedule. */
+function hhmm(text){
+  const m=String(text||'').trim().match(/(\d{1,2})[:.]?(\d{2})?\s*(am|pm)?/i);
+  if(!m) return 9999;
+  let h=+m[1]; const mi=+(m[2]||0), ap=(m[3]||'').toLowerCase();
+  if(ap==='pm'&&h<12) h+=12;
+  if(ap==='am'&&h===12) h=0;
+  if(!ap&&h<8) h+=12;
+  return h*60+mi;
+}
+const timeAgo=iso=>{
+  if(!iso) return '—';
+  const secs=(Date.now()-new Date(iso))/1000;
+  if(secs<90) return 'just now';
+  if(secs<5400) return `${Math.round(secs/60)} min ago`;
+  if(secs<172800) return `${Math.round(secs/3600)} h ago`;
+  return `${Math.round(secs/86400)} d ago`;
+};
+const chk=t=>`<span class="chk ${t}">${t==='no'?ICONS.x:ICONS.check}</span>`;
+function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3600);}
+function paint(root){(root||document).querySelectorAll('[data-i]').forEach(el=>{
+  if(ICONS[el.dataset.i]&&!el.firstElementChild) el.innerHTML=ICONS[el.dataset.i];});}
+async function getJSON(url){const r=await fetch(url); if(!r.ok&&r.status!==400) throw new Error(r.status); return r.json();}
+async function postJSON(url,body,method='POST'){
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body||{})});
+  return r.json();
+}
+
+/* ---------- Routing ---------- */
+const VIEWS={
+  overview:['Overview',"What's happening with your car wash today."],
+  bookings:['Bookings','Every job, filterable — and you can change its state here.'],
+  customers:['Customers','The people behind the bookings, and what the agent remembers.'],
+  analytics:['Analytics','Is this working, and what is it worth?'],
+  settings:['Settings','Your business — the agent reads this on every conversation.'],
+};
+let VIEW='overview';
+function go(view){ location.hash=view; }
+function route(){
+  const view=(location.hash||'#overview').slice(1);
+  if(!VIEWS[view]) return go('overview');
+  VIEW=view;
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id==='view-'+view));
+  document.querySelectorAll('#nav a[data-view]').forEach(a=>a.classList.toggle('active',a.dataset.view===view));
+  $('pageTitle').textContent=VIEWS[view][0];
+  $('pageSub').textContent=VIEWS[view][1];
+  window.scrollTo({top:0,behavior:'smooth'});
+  if(view==='bookings') loadBookings();
+  if(view==='customers') loadCustomers();
+  if(view==='analytics') loadAnalytics();
+  if(view==='settings') loadSettings();
+  if(view==='overview') refresh();
+}
+window.addEventListener('hashchange',route);
+document.querySelectorAll('#nav a[data-view]').forEach(a=>a.onclick=()=>go(a.dataset.view));
+
+function clock(){
+  const d=new Date();
+  $('today').textContent=d.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+  $('clock').textContent=d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+}
+
+/* ======================= OVERVIEW ======================= */
+let DATA={}, CHANNEL='all', notifText='No new notifications';
+
+const STAT_META=[
+  ['total_bookings','Total Bookings','calendar','#EDE9FE','#6D28D9'],
+  ['todays_bookings',"Today's Bookings",'car','#FDF2F8','#DB2777'],
+  ['returning_customers','Returning Customers','users','#F0FDF4','#15803D'],
+  ['memory_hit_rate','Memory Hit Rate','brain','#FFFBEB','#B45309'],
+];
+function renderStats(s,revenue){
+  let html=STAT_META.map(([k,label,ico,bg,fg])=>{
+    const d=s[k]||{value:0};
+    const val=k==='memory_hit_rate'?d.value+'%':d.value;
+    let trend='<span class="trend flat">—</span>';
+    if(d.change!==null&&d.change!==undefined){
+      const up=d.change>=0;
+      trend=`<span class="trend ${up?'up':'down'}">${up?'↑':'↓'} ${Math.abs(d.change)}%</span>`;
+    }
+    return `<div class="card stat">
+      <div class="stat-ico" style="background:${bg};color:${fg}">${ICONS[ico]}</div>
+      <div><div class="stat-label">${label}</div><div class="stat-value">${val}</div>
+        <div class="trend">${trend}<small>${esc(d.caption||'')}</small></div></div></div>`;
+  }).join('');
+  if(revenue){
+    html+=`<div class="card stat">
+      <div class="stat-ico" style="background:#F5F3FF;color:#7C3AED">${ICONS.cash}</div>
+      <div><div class="stat-label">Booked value</div>
+        <div class="stat-value">${esc(money(revenue.this_month,revenue.currency))}</div>
+        <div class="trend"><span class="trend flat">—</span>
+          <small>this month · avg ${esc(money(revenue.average,revenue.currency))}</small></div></div></div>`;
+  }
+  $('stats').innerHTML=html;
+}
+
+const SLOT_ORDER=['customer_name','vehicle_type','preferred_date','preferred_time','contact_details','service_type'];
+function renderConvs(list){
+  const rows=CHANNEL==='all'?list:list.filter(c=>c.channel===CHANNEL);
+  if(!rows.length){
+    $('convList').innerHTML=`<div class="empty"><div class="big">${ICONS.moon}</div>
+      No live conversations.<br>Open the <a class="link" href="/book" target="_blank">customer page</a>
+      and book one to watch it happen here.</div>`;
+    return;
+  }
+  $('convList').innerHTML=rows.map(c=>{
+    const voice=c.channel==='voice';
+    const filled=SLOT_ORDER.filter(s=>c.slots.includes(s)).length;
+    const dots=SLOT_ORDER.map(s=>{
+      const on=c.slots.includes(s);
+      return `<span class="dot ${on?'on':''} ${voice?'voice':''}"
+        title="${s.replace(/_/g,' ')}${on?' ✓ captured':' — still needed'}">${on?ICONS.check:''}</span>`;
+    }).join('');
+    const name=c.customer_name||(String(c.phone).startsWith('web-')?'Website visitor':c.phone);
+    return `<div class="conv">
+      <div class="conv-ico" style="background:${voice?'#ede9fe':'#dcfce7'};color:${voice?'#7c3aed':'#16a34a'}">
+        ${voice?ICONS.mic:ICONS.chat}</div>
+      <div class="conv-body">
+        <div class="conv-top"><b>${esc(name)}</b>
+          <span class="pill ${c.is_returning?'pill-returning':'pill-new'}">${c.is_returning?'Returning':'New'}</span>
+          <span class="conv-time">${timeAgo(c.updated_at)}</span></div>
+        <div class="conv-msg">${esc(c.last_message||'…')}</div>
+        <div class="conv-foot"><div class="dots">${dots}</div>
+          <span class="slots-text">${filled}/6 details</span>
+          <span class="pill pill-active">Active</span></div>
+      </div></div>`;
+  }).join('');
+}
+function setChannel(ch){
+  CHANNEL=ch;
+  document.querySelectorAll('#view-overview .tab').forEach(t=>t.classList.toggle('active',t.dataset.ch===ch));
+  renderConvs(DATA.conversations||[]);
+}
+
+function renderToday(rows){
+  rows=(rows||[]).slice().sort((a,b)=>hhmm(a.preferred_time)-hhmm(b.preferred_time));
+  $('todayCount').textContent=rows.length
+    ? `${rows.length} car${rows.length===1?'':'s'} booked in for today`
+    : 'Nothing booked for today yet';
+  $('todayRows').innerHTML=rows.length?rows.map(b=>`
+    <tr class="clickable" onclick="openCustomer('${esc(b.phone)}')">
+      <td style="width:120px" class="nw"><b>${esc(b.preferred_time||'—')}</b></td>
+      <td><div class="cust"><div class="cust-av" style="background:${colorFor(b.customer_name)}">
+        ${initials(b.customer_name)}</div><div><b>${esc(b.customer_name)}</b>
+        <span>${esc(b.vehicle_type||'')}</span></div></div></td>
+      <td><span class="trunc">${esc(b.service_type||'—')}</span></td>
+      <td class="nw"><span class="chan ${b.channel==='voice'?'voice':'wa'}">
+        ${b.channel==='voice'?ICONS.mic:ICONS.chat}</span></td>
+      <td class="nw"><span class="status ${esc(b.status||'confirmed')}">${esc(b.status||'confirmed')}</span></td>
+    </tr>`).join('')
+    :`<tr><td class="empty">A quiet day so far.</td></tr>`;
+}
+
+function renderInsights(i){
+  const items=[];
+  items.push(['#EDE9FE','#6D28D9','repeat',
+    `<b>${i.returning_count} returning customer${i.returning_count===1?'':'s'} recognised</b>
+     <span>out of ${i.total_customers} known profile${i.total_customers===1?'':'s'}</span>`]);
+  if(i.top_service) items.push(['#F0FDF4','#15803D','droplet',
+    `<b>Most preferred: ${esc(i.top_service)}</b><span>by ${i.top_service_share}% of customers</span>`]);
+  if(i.top_time_of_day) items.push(['#FFFBEB','#B45309','clock',
+    `<b>Peak preference: ${esc(i.top_time_window)}</b><span>${esc(i.top_time_of_day)} — ${i.top_time_share}% of customers</span>`]);
+  if(i.top_vehicle) items.push(['#FDF2F8','#DB2777','car',
+    `<b>Most common vehicle: ${esc(i.top_vehicle)}</b><span>by ${i.top_vehicle_share}% of customers</span>`]);
+  $('insightList').innerHTML=items.length?items.map(([bg,fg,ico,html])=>
+    `<div class="insight"><div class="insight-ico" style="background:${bg};color:${fg}">${ICONS[ico]}</div>
+     <div>${html}</div></div>`).join('')
+    :`<div class="empty">No customer profiles yet.</div>`;
+}
+
+function renderOutbox(rows,wa){
+  $('waMode').innerHTML=wa.configured
+    ? `Live via ${esc(wa.label)}`
+    : `Simulated — ${esc(wa.label)} not configured`;
+  if(!rows||!rows.length){
+    $('outboxList').innerHTML=`<div class="empty" style="padding:18px">
+      No confirmations yet. They're sent the moment a booking saves.</div>`;
+    return;
+  }
+  const tone={sent:['#F0FDF4','#15803D'],simulated:['#FFFBEB','#B45309'],
+              rejected:['#FDF2F8','#DB2777'],failed:['#FDF2F8','#DB2777']};
+  $('outboxList').innerHTML=rows.map(m=>{
+    const [bg,fg]=tone[m.status]||['#F7F6FD','#6E6A8A'];
+    return `<div style="padding:10px 0;border-bottom:1px solid #f1f5f9">
+      <div style="display:flex;gap:9px;align-items:center">
+        <b style="font-size:13px">${esc(m.phone)}</b>
+        <span class="pill" style="background:${bg};color:${fg}">${esc(m.status)}</span>
+        <span style="margin-left:auto;font-size:11.5px;color:var(--muted)">${timeAgo(m.created_at)}</span>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-top:4px">${esc((m.body||'').slice(0,110))}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderChart(series){
+  const W=460,H=190,PAD_L=30,PAD_B=26,PAD_T=14;
+  const max=Math.max(4,...series.map(p=>p.count));
+  const step=Math.ceil(max/4)||1, top=step*4;
+  const x=i=>PAD_L+(i*(W-PAD_L-10))/Math.max(series.length-1,1);
+  const y=v=>PAD_T+(1-v/top)*(H-PAD_T-PAD_B);
+  let svg='';
+  for(let g=0;g<=4;g++){
+    const val=step*g, yy=y(val);
+    svg+=`<line class="gridline" x1="${PAD_L}" y1="${yy}" x2="${W-10}" y2="${yy}"/>`;
+    svg+=`<text class="axis" x="${PAD_L-8}" y="${yy+3.5}" text-anchor="end">${val}</text>`;
+  }
+  svg+=series.map((p,i)=>`<text class="axis" x="${x(i)}" y="${H-8}" text-anchor="middle">${p.label}</text>`).join('');
+  svg+=`<polyline class="spark-line" points="${series.map((p,i)=>`${x(i)},${y(p.count)}`).join(' ')}"/>`;
+  svg+=series.map((p,i)=>`<circle class="spark-pt" cx="${x(i)}" cy="${y(p.count)}" r="3.6">
+    <title>${p.label}: ${p.count}</title></circle>`).join('');
+  const peak=series.reduce((a,b,i)=>b.count>series[a].count?i:a,0);
+  if(series[peak].count>0){
+    const px=Math.min(Math.max(x(peak),PAD_L+14),W-24), py=y(series[peak].count);
+    svg+=`<rect class="peak" x="${px-15}" y="${py-30}" width="30" height="19" rx="6"/>`;
+    svg+=`<text class="peak-txt" x="${px}" y="${py-16.5}">${series[peak].count}</text>`;
+  }
+  $('chart').innerHTML=svg;
+}
+
+async function refresh(manual){
+  try{
+    DATA=await getJSON('api/overview');
+    renderStats(DATA.stats,DATA.revenue);
+    renderConvs(DATA.conversations);
+    renderToday(DATA.today);
+    renderInsights(DATA.insights);
+    renderChart(DATA.trend);
+    renderOutbox(DATA.outbox,DATA.whatsapp);
+    if(DATA.business_name) $('sideBiz').textContent=DATA.business_name;
+    $('tagBookings').textContent=DATA.stats.total_bookings.value;
+    $('tagCustomers').textContent=DATA.insights.total_customers;
+    const n=DATA.conversations.length;
+    $('notifCount').textContent=n;
+    $('notifCount').style.display=n?'grid':'none';
+    notifText=n?`${n} conversation${n===1?'':'s'} in progress`:'No new notifications';
+    if(manual) toast('Refreshed');
+  }catch(e){ if(manual) toast('Could not reach the API'); }
+}
+
+/* ======================= BOOKINGS ======================= */
+let BK={offset:0,limit:25,sort:'created_at',direction:'desc',total:0};
+function bkFilters(){
+  return {
+    search:$('fSearch').value.trim()||undefined,
+    channel:$('fChannel').value, status:$('fStatus').value, service:$('fService').value,
+    date_from:$('fFrom').value||undefined, date_to:$('fTo').value||undefined,
+  };
+}
+async function loadBookings(){
+  const f=bkFilters();
+  const qs=new URLSearchParams({sort:BK.sort,direction:BK.direction,
+    limit:BK.limit,offset:BK.offset});
+  for(const [k,v] of Object.entries(f)) if(v&&v!=='all') qs.set(k,v);
+  let d;
+  try{ d=await getJSON('api/bookings?'+qs); }catch(e){ toast('Could not load bookings'); return; }
+  BK.total=d.total;
+
+  if($('fStatus').options.length<=1)
+    $('fStatus').innerHTML='<option value="all">All</option>'+
+      d.statuses.map(s=>`<option value="${s}">${s[0].toUpperCase()+s.slice(1)}</option>`).join('');
+  if($('fService').options.length<=1)
+    $('fService').innerHTML='<option value="all">All</option>'+
+      d.services.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+
+  document.querySelectorAll('th.sortable').forEach(th=>{
+    th.querySelector('.arrow').textContent=th.dataset.sort===BK.sort?(BK.direction==='asc'?'▲':'▼'):'';
+  });
+
+  const active=Object.entries(f).filter(([k,v])=>v&&v!=='all').length;
+  $('bkSummary').textContent=`${d.total} booking${d.total===1?'':'s'}`+
+    (active?` matching ${active} filter${active===1?'':'s'}`:'');
+  $('pageInfo').textContent=d.total
+    ? `Showing ${BK.offset+1}–${Math.min(BK.offset+BK.limit,d.total)} of ${d.total}` : 'Nothing to show';
+  $('prevPage').disabled=BK.offset===0;
+  $('nextPage').disabled=BK.offset+BK.limit>=d.total;
+
+  $('bookingRows').innerHTML=d.rows.length?d.rows.map(b=>{
+    const voice=b.channel==='voice', st=b.status||'confirmed';
+    return `<tr>
+      <td><div class="cust clickable" onclick="openCustomer('${esc(b.phone)}')">
+        <div class="cust-av" style="background:${colorFor(b.customer_name)}">${initials(b.customer_name)}</div>
+        <div><b>${esc(b.customer_name)}</b><span>${esc(b.phone||'')}</span></div></div></td>
+      <td><span class="trunc" title="${esc(b.vehicle_type||'')}">${esc(b.vehicle_type||'—')}</span></td>
+      <td><span class="trunc">${esc(b.service_type||'—')}</span></td>
+      <td class="nw"><b>${esc(niceDate(b.preferred_date))}</b><br>
+        <span style="color:var(--muted);font-size:12px">${esc(b.preferred_time||'')}</span></td>
+      <td class="nw"><span class="chan ${voice?'voice':'wa'}" title="${esc(b.channel)}">
+        ${voice?ICONS.mic:ICONS.chat}</span></td>
+      <td class="nw"><span class="status ${esc(st)}">${esc(st)}</span></td>
+      <td class="nw">
+        ${st!=='completed'?`<button class="btn btn-ok btn-sm" onclick="setStatus(${b.id},'completed')">Done</button> `:''}
+        ${st!=='cancelled'?`<button class="btn btn-danger btn-sm" onclick="setStatus(${b.id},'cancelled')">Cancel</button>`:
+          `<button class="btn btn-ghost btn-sm" onclick="setStatus(${b.id},'confirmed')">Restore</button>`}
+      </td></tr>`;
+  }).join('')
+  :`<tr><td colspan="7" class="empty">No bookings match these filters.</td></tr>`;
+}
+function page(dir){
+  BK.offset=Math.max(0,BK.offset+dir*BK.limit);
+  loadBookings();
+}
+function resetFilters(){
+  ['fSearch','fFrom','fTo'].forEach(id=>$(id).value='');
+  ['fChannel','fStatus','fService'].forEach(id=>$(id).value='all');
+  BK.offset=0; loadBookings();
+}
+async function setStatus(id,status){
+  const d=await postJSON(`api/bookings/${id}/status`,{status});
+  if(!d.ok){ toast(d.error||'Could not update'); return; }
+  toast(`Booking #${id} marked ${status}`);
+  loadBookings();
+}
+document.querySelectorAll('th.sortable').forEach(th=>{
+  th.onclick=()=>{
+    if(BK.sort===th.dataset.sort) BK.direction=BK.direction==='asc'?'desc':'asc';
+    else{ BK.sort=th.dataset.sort; BK.direction='asc'; }
+    BK.offset=0; loadBookings();
+  };
+});
+['fChannel','fStatus','fService','fFrom','fTo'].forEach(id=>
+  $(id).addEventListener('change',()=>{BK.offset=0;loadBookings();}));
+let searchTimer=null;
+$('fSearch').addEventListener('input',()=>{
+  clearTimeout(searchTimer);
+  searchTimer=setTimeout(()=>{BK.offset=0;loadBookings();},250);
+});
+async function exportCsv(){
+  const d=await postJSON('api/export',bkFilters());
+  toast(d.ok?`Exported ${d.rows} booking${d.rows===1?'':'s'}${d.filtered?' (filtered)':''} → ${d.path}`
+            :'Export failed');
+}
+
+/* ======================= CUSTOMERS ======================= */
+let CUSTOMERS=[];
+async function loadCustomers(){
+  try{ CUSTOMERS=(await getJSON('api/customers')).rows; }
+  catch(e){ toast('Could not load customers'); return; }
+  renderCustomers();
+}
+function renderCustomers(){
+  const q=($('cSearch').value||'').toLowerCase();
+  const rows=CUSTOMERS.filter(c=>!q||JSON.stringify(c).toLowerCase().includes(q));
+  $('customerRows').innerHTML=rows.length?rows.map(c=>`
+    <tr class="clickable" onclick="openCustomer('${esc(c.phone)}')">
+      <td><div class="cust"><div class="cust-av" style="background:${colorFor(c.customer_name)}">
+        ${initials(c.customer_name)}</div><div><b>${esc(c.customer_name||'Unknown')}</b>
+        <span>${esc(c.phone)}</span></div></div></td>
+      <td>${esc(c.vehicle_type||'—')}</td>
+      <td><span class="trunc">${esc(c.usual_service||'—')}</span></td>
+      <td>${esc(c.preferred_time_of_day||'—')}</td>
+      <td><b>${c.bookings}</b></td>
+      <td class="nw">${esc(money(c.lifetime_value,(DATA.revenue||{}).currency))}</td>
+      <td class="nw">${(c.channels||[]).map(ch=>`<span class="chan ${ch==='voice'?'voice':'wa'}"
+          style="display:inline-grid;margin-right:4px" title="${esc(ch)}">
+          ${ch==='voice'?ICONS.mic:ICONS.chat}</span>`).join('')||'—'}</td>
+      <td class="nw">${timeAgo(c.last_seen)}</td>
+    </tr>`).join('')
+    :`<tr><td colspan="8" class="empty">No customers yet.</td></tr>`;
+}
+$('cSearch').addEventListener('input',renderCustomers);
+
+async function openCustomer(phone){
+  if(!phone||phone.startsWith('web-')) return;
+  let d;
+  try{ d=await getJSON('api/customers/'+encodeURIComponent(phone)); }
+  catch(e){ toast('No profile for that number yet'); return; }
+  if(!d.ok){ toast(d.error||'Not found'); return; }
+  const p=d.profile||{}, name=p.customer_name||d.bookings[0]?.customer_name||'Unknown';
+  $('dwAv').style.background=colorFor(name);
+  $('dwAv').textContent=initials(name);
+  $('dwName').textContent=name;
+  $('dwSub').textContent=`${phone} · ${d.bookings.length} booking${d.bookings.length===1?'':'s'}`;
+
+  const cur=(DATA.revenue||{}).currency||'';
+  // Lifetime value is computed server-side (analytics.customer_table) so the
+  // drawer and the table can't disagree about it.
+  const lv=(CUSTOMERS.find(c=>c.phone===phone)||{}).lifetime_value;
+
+  $('dwBody').innerHTML=`
+    <div class="mini-title">What the agent remembers</div>
+    <dl class="kv">
+      <dt>Vehicle</dt><dd>${esc(p.vehicle_type||'—')}</dd>
+      <dt>Usual service</dt><dd>${esc(p.usual_service||'—')}</dd>
+      <dt>Usually books</dt><dd>${esc(p.preferred_time_of_day||'—')}</dd>
+      <dt>Bookings so far</dt><dd>${p.booking_count??d.bookings.length}</dd>
+      <dt>Last booking</dt><dd>${esc(niceDate(p.last_booking_date))}</dd>
+      ${lv!==undefined?`<dt>Lifetime value</dt><dd>${esc(money(lv,cur))}</dd>`:''}
+    </dl>
+    <div class="note-line" style="padding:0 0 4px">
+      This is the whole profile — no transcripts, no notes about the person.
+      Every field here removes a question from their next booking.
+    </div>
+
+    <div class="mini-title">Booking history</div>
+    ${d.bookings.map(b=>`<div class="hist">
+      <div class="top"><b>${esc(niceDate(b.preferred_date))} · ${esc(b.preferred_time||'')}</b>
+        <span class="status ${esc(b.status||'confirmed')}" style="margin-left:auto">
+          ${esc(b.status||'confirmed')}</span></div>
+      <div class="meta">${esc(b.service_type||'Standard')} · ${esc(b.vehicle_type||'')} ·
+        via ${esc(b.channel)}${b.turns?` · booked in ${b.turns} turns`:''}</div>
+    </div>`).join('')||'<div class="empty">No bookings.</div>'}
+
+    <div class="mini-title">Messages sent</div>
+    ${(d.messages||[]).map(m=>`<div class="msg-row">
+      <div class="who">${esc(m.status)} · ${timeAgo(m.created_at)}</div>${esc(m.body)}</div>`).join('')
+      ||'<div class="note-line" style="padding:0">Nothing sent to this number yet.</div>'}
+  `;
+  $('drawer').classList.add('on'); $('scrim').classList.add('on');
+}
+function closeDrawer(){ $('drawer').classList.remove('on'); $('scrim').classList.remove('on'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+/* ======================= ANALYTICS ======================= */
+let RANGE=30;
+function setRange(days){
+  RANGE=days;
+  document.querySelectorAll('#rangeTabs .tab').forEach(t=>t.classList.toggle('active',+t.dataset.days===days));
+  loadAnalytics();
+}
+async function loadAnalytics(){
+  let d;
+  try{ d=await getJSON('api/analytics?days='+RANGE); }
+  catch(e){ toast('Could not load analytics'); return; }
+  renderImpact(d.impact);
+  renderStack(d.series);
+  renderServiceBars(d.services,d.revenue);
+  renderSimpleBars('todBars',d.time_of_day.map(t=>[t.bucket,t.count]),'#EC4899');
+  renderSimpleBars('statusBars',Object.entries(d.status),'#7C3AED');
+  $('seriesSub').textContent=`Last ${d.days} days · ${d.series.reduce((s,p)=>s+p.count,0)} bookings`;
+}
+function renderImpact(i){
+  const cell=(big,cap,sub,cls='')=>`<div><div class="big ${cls}">${big}</div>
+    <div class="cap">${cap}</div><div class="sub">${sub||''}</div></div>`;
+  if(i.returning_customer_turns===null||i.new_customer_turns===null){
+    $('impact').innerHTML=cell('—','Not enough data yet',
+      'Complete a few bookings from new and returning customers and this fills in.');
+    $('impactNote').textContent=
+      `${i.untracked} older booking${i.untracked===1?'':'s'} predate turn tracking and are excluded — `+
+      `they are not estimated.`;
+    return;
+  }
+  $('impact').innerHTML=
+    cell(i.new_customer_turns,'Turns to book — new customer',`${i.sample_new} bookings`)+
+    cell(i.returning_customer_turns,'Turns to book — remembered customer',
+      `${i.sample_returning} bookings`,'good')+
+    cell(i.turns_saved!==null?`−${i.turns_saved}`:'—','Turns saved by memory',
+      i.turns_saved_pct!==null?`${i.turns_saved_pct}% shorter conversation`:'','good')+
+    cell(i.turns_saved_pct!==null?`${i.turns_saved_pct}%`:'—','Less of your customer\'s time',
+      'Fewer questions, fewer drop-offs, lower model cost','good');
+  $('impactNote').textContent=
+    `Measured from ${i.sample_new+i.sample_returning} tracked bookings. `+
+    (i.untracked?`${i.untracked} older booking${i.untracked===1?'':'s'} predate turn tracking and are excluded.`:'');
+}
+function renderStack(series){
+  const W=900,H=260,PAD_L=38,PAD_B=30,PAD_T=14;
+  const max=Math.max(3,...series.map(p=>p.count));
+  const step=Math.ceil(max/4)||1, top=step*4;
+  const bw=Math.max(3,(W-PAD_L-14)/series.length-3);
+  const x=i=>PAD_L+i*((W-PAD_L-14)/series.length);
+  const y=v=>PAD_T+(1-v/top)*(H-PAD_T-PAD_B);
+  let svg='';
+  for(let g=0;g<=4;g++){
+    const val=step*g,yy=y(val);
+    svg+=`<line class="gridline" x1="${PAD_L}" y1="${yy}" x2="${W-8}" y2="${yy}"/>
+          <text class="axis" x="${PAD_L-8}" y="${yy+3.5}" text-anchor="end">${val}</text>`;
+  }
+  series.forEach((p,i)=>{
+    const wa=p.whatsapp||0, v=p.voice||0;
+    const yWa=y(wa), yTop=y(wa+v);
+    if(wa) svg+=`<rect x="${x(i)}" y="${yWa}" width="${bw}" height="${Math.max(0,y(0)-yWa)}"
+      fill="#22C55E" rx="2"><title>${p.label}: ${wa} WhatsApp</title></rect>`;
+    if(v) svg+=`<rect x="${x(i)}" y="${yTop}" width="${bw}" height="${Math.max(0,yWa-yTop)}"
+      fill="#7C3AED" rx="2"><title>${p.label}: ${v} voice</title></rect>`;
+    // Only label every Nth day, or a 90-day axis becomes an ink smear.
+    const every=Math.ceil(series.length/12);
+    if(i%every===0) svg+=`<text class="axis" x="${x(i)+bw/2}" y="${H-10}" text-anchor="middle">${p.label}</text>`;
+  });
+  $('stackChart').innerHTML=svg;
+}
+function renderServiceBars(services,revenue){
+  const cur=revenue?revenue.currency:'';
+  const max=Math.max(1,...services.map(s=>s.count));
+  $('revSub').textContent=revenue
+    ? `${money(revenue.total,cur)} booked across ${revenue.priced_bookings} priced bookings` : '';
+  $('serviceBars').innerHTML=services.map(s=>`
+    <div class="bar-row"><span class="nm" title="${esc(s.service)}">${esc(s.service)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${(s.count/max*100).toFixed(1)}%"></span></span>
+      <span class="vl">${s.count} · ${s.revenue!==null?esc(money(s.revenue,cur)):'—'}</span></div>`).join('')
+    ||`<div class="empty">No bookings yet.</div>`;
+}
+function renderSimpleBars(target,pairs,color){
+  const max=Math.max(1,...pairs.map(p=>p[1]));
+  $(target).innerHTML=pairs.map(([name,count])=>`
+    <div class="bar-row"><span class="nm">${esc(name[0].toUpperCase()+name.slice(1))}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${(count/max*100).toFixed(1)}%;
+        background:${color}"></span></span>
+      <span class="vl">${count}</span></div>`).join('');
+}
+
+/* ======================= SETTINGS ======================= */
+let SETTINGS={}, SETTINGS_META={};
+async function loadSettings(){
+  let d;
+  try{ d=await getJSON('api/settings'); }catch(e){ toast('Could not load settings'); return; }
+  SETTINGS=d.settings; SETTINGS_META=d;
+  $('sName').value=SETTINGS.business_name||'';
+  $('sPhone').value=SETTINGS.phone||'';
+  $('sAddr').value=SETTINGS.address||'';
+  $('sCurrency').value=SETTINGS.currency||'';
+  $('sWindow').value=SETTINGS.max_days_ahead||30;
+  $('sPersona').value=SETTINGS.agent_persona||'';
+  $('sConfirm').checked=!!SETTINGS.send_confirmation;
+  $('sTemplate').value=SETTINGS.confirmation_template||'';
+  $('sideBiz').textContent=SETTINGS.business_name||'DualBook';
+  $('saveMsg').textContent=''; $('saveMsg').className='msg';
+  renderServiceRows(SETTINGS.services||[]);
+  renderHourRows(SETTINGS.hours||{});
+
+  const wa=d.whatsapp;
+  $('waBadge').className='right badge '+(wa.configured?'live':'sim');
+  $('waBadge').textContent=wa.configured?'Live':'Simulated';
+  $('sysInfo').innerHTML=[
+    ['Conversation model',d.llm],
+    ['WhatsApp transport',`${wa.label} — ${wa.configured?'configured':'not configured'}`],
+    ['Voice platform',d.voice.uplift?'Uplift AI':(d.voice.vapi?'Vapi':'Browser only (Web Speech API)')],
+    ['Database',d.db_path],
+  ].map(([k,v])=>`<div class="sysline"><b>${esc(k)}</b><span class="v">${esc(v)}</span></div>`).join('')
+   +`<div class="note-line" style="padding:12px 0 0">These come from <code>.env</code> and need a
+     restart to change — unlike everything above, which the agent picks up on its next conversation.</div>`;
+}
+function renderServiceRows(services){
+  $('serviceRows').innerHTML=services.map((s,i)=>serviceRow(s,i)).join('')||
+    '<div class="note-line" style="padding:0">No services — add one.</div>';
+}
+function serviceRow(s,i){
+  return `<div class="svc-row" data-row="${i}">
+    <input class="fld" data-f="name" value="${esc(s.name||'')}" placeholder="Service name">
+    <input class="fld" data-f="price" type="number" min="0" value="${s.price??0}" placeholder="Price">
+    <input class="fld" data-f="minutes" type="number" min="0" value="${s.minutes??0}" placeholder="Minutes">
+    <input class="fld" data-f="description" value="${esc(s.description||'')}" placeholder="Short description">
+    <button class="btn btn-danger btn-sm" onclick="this.parentElement.remove()">Remove</button>
+  </div>`;
+}
+function addService(){
+  $('serviceRows').insertAdjacentHTML('beforeend',
+    serviceRow({name:'',price:0,minutes:30,description:''},Date.now()));
+}
+function renderHourRows(hours){
+  $('hourRows').innerHTML=(SETTINGS_META.days||[]).map(day=>{
+    const h=hours[day]||{};
+    return `<div class="hour-row" data-day="${day}">
+      <span class="day">${esc(SETTINGS_META.day_labels[day])}</span>
+      <input class="fld" type="time" data-f="open" value="${esc(h.open||'09:00')}">
+      <span style="color:var(--muted)">to</span>
+      <input class="fld" type="time" data-f="close" value="${esc(h.close||'18:00')}">
+      <label class="switch" style="margin-left:auto;font-size:12.5px">
+        <input type="checkbox" data-f="closed" ${h.closed?'checked':''}><span>Closed</span></label>
+    </div>`;
+  }).join('');
+}
+function collectSettings(){
+  const services=[...document.querySelectorAll('#serviceRows .svc-row')].map(row=>{
+    const get=f=>row.querySelector(`[data-f="${f}"]`).value;
+    return {name:get('name'),price:get('price'),minutes:get('minutes'),description:get('description')};
+  }).filter(s=>s.name.trim());
+  const hours={};
+  document.querySelectorAll('#hourRows .hour-row').forEach(row=>{
+    hours[row.dataset.day]={
+      open:row.querySelector('[data-f="open"]').value,
+      close:row.querySelector('[data-f="close"]').value,
+      closed:row.querySelector('[data-f="closed"]').checked,
+    };
+  });
+  return {
+    business_name:$('sName').value, phone:$('sPhone').value, address:$('sAddr').value,
+    currency:$('sCurrency').value, max_days_ahead:$('sWindow').value,
+    agent_persona:$('sPersona').value, send_confirmation:$('sConfirm').checked,
+    confirmation_template:$('sTemplate').value, services, hours,
+  };
+}
+async function saveSettings(){
+  const msg=$('saveMsg');
+  msg.className='msg'; msg.textContent='Saving…';
+  const d=await postJSON('api/settings',collectSettings(),'PUT');
+  if(!d.ok){ msg.className='msg err'; msg.textContent=d.error||'Could not save.'; return; }
+  SETTINGS=d.settings;
+  $('sideBiz').textContent=SETTINGS.business_name;
+  msg.className='msg ok';
+  msg.textContent='Saved — the agent uses this from its very next conversation.';
+  toast('Settings saved');
+  renderServiceRows(SETTINGS.services); renderHourRows(SETTINGS.hours);
+}
+async function checkNumber(){
+  const phone=$('sTestPhone').value.trim();
+  if(!phone){ $('waCheck').textContent='Enter a number to check.'; return; }
+  const d=await postJSON('api/whatsapp/validate',{phone});
+  $('waCheck').innerHTML=d.ok
+    ? `${chk('ok')}Valid — would send to <b>${esc(d.normalised)}</b>.`+
+      (d.warning?`<br>${chk('warn')}<span style="color:#B45309">${esc(d.warning)}</span>`:'')
+    : `${chk('no')}${esc(d.reason)}`;
+}
+async function sendTest(){
+  const phone=$('sTestPhone').value.trim();
+  if(!phone){ $('waCheck').textContent='Enter a number first.'; return; }
+  $('waCheck').textContent='Sending…';
+  const d=await postJSON('api/whatsapp/test',{phone});
+  $('waCheck').innerHTML=
+    d.status==='sent'    ? `${chk('ok')}Sent to <b>${esc(d.to)}</b>.`
+  : d.status==='simulated'? `${chk('warn')}Recorded but not delivered — ${esc(d.reason)}`
+  : `${chk('no')}${esc(d.reason||'Failed')}`;
+  toast(d.status==='sent'?'Test message sent':'Logged in the outbox');
+}
+
+/* ---------- Boot ---------- */
+paint();
+$('sideArt').innerHTML=SIDE_ART;
+clock(); setInterval(clock,10000);
+route();
+// Always fetch the overview once, even when the page is opened straight at
+// #settings — the sidebar counts and the currency come from it.
+refresh();
+// Only the overview polls — a filtered bookings table that reshuffles under
+// your cursor every five seconds is hostile.
+setInterval(()=>{ if(VIEW==='overview') refresh(); },5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# HTTP: the LLM providers (Groq/Gemini/OpenRouter/Ollama all speak the
+# OpenAI-compatible /chat/completions shape), plus Whapi.Cloud and Uplift AI.
+requests>=2.32.0
+
+# Webhook server (WhatsApp), session token broker (voice), dashboard (:8080).
+# The dashboard UI itself is a single self-contained HTML file — no build step,
+# no JS package manager, no CDN.
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+
+# Config
+python-dotenv>=1.0.0
+
+# Voice: joining the Uplift/LiveKit room to host the save_booking RPC handler.
+# Only needed for `run_voice.py session --join`; everything else runs without it.
+livekit>=0.17.0
+
+# OPTIONAL — only if you set LLM_PROVIDER=anthropic (paid; no free tier).
+# Every free provider above works over plain `requests`, so this stays optional.
+# anthropic>=0.69.0
