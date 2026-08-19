@@ -1,0 +1,54 @@
+{
+  "_README": [
+    "WhatsApp message templates, as registered with Meta.",
+    "",
+    "Each key here is an outbound message KIND (matching notify.send_whatsapp's",
+    "`kind` argument). A kind with no entry can only be sent inside the 24-hour",
+    "session window; outside it, the send is blocked and recorded rather than",
+    "handed to Meta to reject.",
+    "",
+    "FIELDS",
+    "  name       Template name EXACTLY as registered in Meta. Lowercase,",
+    "             digits and underscores only - Meta rejects anything else.",
+    "  language   Language/locale code EXACTLY as registered, e.g. en_US, en_GB,",
+    "             ur. A mismatch here fails at send time with error 132001,",
+    "             which reads like the template does not exist.",
+    "  body_text  The approved body text, with {{1}}, {{2}} ... placeholders.",
+    "             Kept here so the outbox can show what the customer actually",
+    "             received, and so a variable-count mismatch is caught locally",
+    "             instead of at Meta.",
+    "  variables  Ordered list of value names filling {{1}}, {{2}} ... The names",
+    "             come from the same vocabulary the free-text confirmation uses:",
+    "             name, business, service, date, time, vehicle, id.",
+    "",
+    "NOTHING HERE TAKES EFFECT UNTIL THE TEMPLATE IS APPROVED BY META.",
+    "See the WhatsApp template checklist in SETUP.md."
+  ],
+
+  "booking_confirmation": {
+    "name": "booking_confirmation",
+    "language": "en_US",
+    "body_text": "Hi {{1}}! Your {{2}} at {{3}} is confirmed for {{4}} at {{5}}. Booking #{{6}}. Reply here if you need to change anything.",
+    "variables": ["name", "service", "business", "date", "time", "id"]
+  },
+
+  "test": {
+    "_note": [
+      "Meta pre-approves `hello_world` on every WhatsApp Business account, so",
+      "this one needs NO registration and works the moment your credentials are",
+      "in. It is the only template you can rely on before approving your own.",
+      "",
+      "It is declared here because 'Send test' on the dashboard exists to check",
+      "a number you have never messaged - which is, by definition, outside the",
+      "24-hour window. Without an entry here that check could never run.",
+      "",
+      "The wording is fixed by Meta and ignores whatever you type in the test",
+      "box: outside the window, Meta renders its own approved body. Inside the",
+      "window your typed message is sent as free text instead."
+    ],
+    "name": "hello_world",
+    "language": "en_US",
+    "body_text": "Hello World\n\nWelcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API, hosted by Meta. To learn more, please visit our website.",
+    "variables": []
+  }
+}

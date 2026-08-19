@@ -108,24 +108,33 @@ month** once you attach a real number.
 | **Phone number ID** (under "From") | `META_WA_PHONE_NUMBER_ID` |
 | **"To" → Manage phone number list** | add your own number so you can test |
 
+> **You never scan a QR code.** Meta gives *you* a business test number — that
+> number is the agent. Your own number goes in the "To" list as one of the (up
+> to 5) recipients it's allowed to message. QR-scanning is how the *unofficial*
+> providers link your personal WhatsApp account; this isn't that.
+
 4. Invent any random string for `META_WA_VERIFY_TOKEN` — you'll paste the same
    one into Meta in step 6.
+5. Go to **App settings → Basic → App secret → Show** and copy it into
+   `META_WA_APP_SECRET`. This is what proves an incoming webhook actually came
+   from Meta (see the warning after step 7).
 
 ```env
 WHATSAPP_PROVIDER=meta
 META_WA_TOKEN=EAAG...
 META_WA_PHONE_NUMBER_ID=123456789012345
 META_WA_VERIFY_TOKEN=whatever-string-you-choose
+META_WA_APP_SECRET=32-hex-characters-from-app-settings
 ```
 
-5. Start the server and expose it:
+6. Start the server and expose it:
 
 ```bash
 python run_whatsapp.py serve --port 8000
 ngrok http 8000                       # separate terminal
 ```
 
-6. Back in Meta: **WhatsApp → Configuration → Webhook → Edit**
+7. Back in Meta: **WhatsApp → Configuration → Webhook → Edit**
    - **Callback URL:** `https://<your-id>.ngrok.io/webhook`
    - **Verify token:** the same string you chose in step 4
    - Click **Verify and save**, then **Manage** → subscribe to **messages**
@@ -133,9 +142,63 @@ ngrok http 8000                       # separate terminal
 Meta sends a GET request to confirm the URL. Your server echoes the challenge
 back automatically — you should see `Meta webhook verified` in the logs.
 
+> ⚠️ **The verify token is not a password.** It's checked exactly once, when
+> Meta first saves the URL, and never again. Every *message* is authenticated by
+> the `X-Hub-Signature-256` header, which needs `META_WA_APP_SECRET`. Without it
+> the endpoint accepts any POST that reaches it — an ngrok URL is not a secret.
+> The server tells you which mode it's in at startup:
+>
+> ```
+> Webhook authentication: ON
+> Webhook authentication: OFF — META_WA_APP_SECRET is not set, ...
+> ```
+>
+> and reports `webhook_authenticated` on `GET /health`. `python run_vapi.py
+> doctor` checks it too.
+
 > ⚠️ The temporary token **expires in 24 hours**. For anything lasting, create a
 > System User token: Business Settings → System Users → Add → Generate token
 > with `whatsapp_business_messaging` + `whatsapp_business_management`.
+
+### Tier 2b — Message templates (required before voice bookings get confirmed)
+
+**TODO before going live.** WhatsApp lets you send free text to someone only
+within **24 hours of their last message to you**. Replying inside a WhatsApp
+chat is fine. But a confirmation for a booking taken **by phone** goes to a
+number that never messaged your WhatsApp — that's an *opening* message, and only
+a pre-approved **template** may open a conversation. Meta refuses free text with
+error `131047`.
+
+The code already handles the decision (`notify.choose_mode`): inside the window
+it sends free text, outside it it sends the declared template. What it cannot do
+for you is get a template approved. That part is manual:
+
+- [ ] **1. Register the template.** Meta dashboard → **WhatsApp → Manage
+      templates → Create template**. Category **Utility** (not Marketing —
+      Utility is cheaper and approves faster for booking confirmations).
+- [ ] **2. Write the body with numbered placeholders**, and keep it identical to
+      `body_text` in `dualbook/templates/whatsapp.json`:
+      ```
+      Hi {{1}}! Your {{2}} at {{3}} is confirmed for {{4}} at {{5}}.
+      Booking #{{6}}. Reply here if you need to change anything.
+      ```
+- [ ] **3. Submit and wait for approval.** Usually minutes, up to 24 hours. The
+      status must read **Approved** — *Pending* templates fail at send time.
+- [ ] **4. Copy the exact name and language code** into
+      `dualbook/templates/whatsapp.json`. The name is lowercase/digits/
+      underscores only, and the language code (`en_US`, not `en`) must match the
+      registration character for character. A mismatch fails with `132001`,
+      which reads misleadingly like the template doesn't exist.
+- [ ] **5. Set the credentials** in `.env` — `META_WA_TOKEN` and
+      `META_WA_PHONE_NUMBER_ID` (this project's names for what Meta's docs call
+      the access token and phone number ID), plus `META_WA_APP_SECRET`.
+- [ ] **6. Verify** with `python run_vapi.py doctor`, which now reports declared
+      templates and flags a missing one.
+
+Until all six are done, out-of-window confirmations are recorded in the outbox
+with status **`blocked`** and the reason, rather than being attempted and
+failing. Nothing else changes: in-window replies, simulated mode and the
+booking itself are unaffected.
 
 <details>
 <summary>Alternative: Whapi.Cloud (paid)</summary>
@@ -169,7 +232,7 @@ VAPI_API_KEY=your_private_key
 VAPI_PUBLIC_KEY=your_public_key
 VAPI_SERVER_SECRET=another-random-string-you-choose
 VAPI_LLM_PROVIDER=groq            # your own key -> model tokens cost $0
-VAPI_LLM_MODEL=llama-3.3-70b-versatile
+VAPI_LLM_MODEL=openai/gpt-oss-120b
 ```
 
 3. **This is the step people miss.** Vapi executes `save_booking` by POSTing to
@@ -260,7 +323,7 @@ free Groq key, with the same booking and memory behaviour.
 ```env
 UPLIFT_API_KEY=your_uplift_key
 UPLIFT_LLM_PROVIDER=groq
-UPLIFT_LLM_MODEL=llama-3.3-70b-versatile
+UPLIFT_LLM_MODEL=openai/gpt-oss-120b
 ```
 
 Key from https://upliftai.org → dashboard → API keys. You do **not** need

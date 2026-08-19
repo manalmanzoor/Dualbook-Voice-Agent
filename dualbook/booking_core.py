@@ -205,6 +205,15 @@ def build_system_prompt(
     name we guessed from a prefilled field is worse than not greeting them.
     """
     today = today or date.today().isoformat()
+    # The weekday, spelled out. Without it the model does the day-of-week
+    # arithmetic itself and gets it wrong — saying "Tuesday the 20th" for a
+    # Thursday. The date it SAVES stays correct, so this is not caught by any
+    # validator; the customer just hears the wrong day and turns up expecting it.
+    try:
+        weekday = date.fromisoformat(today).strftime("%A")
+        today_line = f"{today} ({weekday})"
+    except ValueError:
+        today_line = today
     settings = settings or settings_store.get()
     slot_lines = "\n".join(
         f"  - {slot.name}{'' if slot.required else ' (optional)'}: {slot.description}"
@@ -249,7 +258,7 @@ Your one job is to book a car wash through natural conversation.
 {_CHANNEL_STYLE.get(channel, _CHANNEL_STYLE['whatsapp'])}
 {settings.get('agent_persona') or ''}
 
-Today's date is {today}.
+Today is {today_line}. Work out any other weekday from that date — never guess it.
 
 {identity_block}
 
@@ -275,6 +284,8 @@ HOW TO COLLECT IT
 - Accept natural answers. "tomorrow morning" gives you a date AND a time;
   don't ask again for either.
 - Resolve relative dates against today's date before saving.
+- Never offer or accept a time that has already passed. If they ask for a slot
+  earlier today, say so plainly and offer the next time you are actually open.
 - service_type is optional. Offer the menu once; if they don't care, move on
   rather than pressing.
 
@@ -507,7 +518,9 @@ def complete_booking(
     try:
         from . import notify
 
-        notify.booking_confirmation(booking, booking_id, settings=settings)
+        notify.booking_confirmation(
+            booking, booking_id, settings=settings, db_path=db_path
+        )
     except Exception:  # pragma: no cover - notification must not break booking
         log.exception("Confirmation message failed for booking %s", booking_id)
 
@@ -791,6 +804,107 @@ class ConversationEngine:
             "date and time of THIS booking.]"
         )
 
+    # -- Progress detection (DISPLAY ONLY) -----------------------------------
+    # Name and number are detected on every turn because the conversation needs
+    # them (see _detect_stated_name / _detect_phone). The remaining slots used
+    # to be learned only when the model finally called save_booking — so a
+    # customer could say "a Honda Civic, Saturday morning" and watch the
+    # progress bar sit still until the very last message, which reads as the
+    # agent not listening.
+    #
+    # These detectors close that gap. They are deliberately allowed to be
+    # imperfect, because NOTHING here reaches a booking: `captured` is display
+    # bookkeeping, and the row that gets saved is still built exclusively from
+    # the model's confirmed tool arguments. A missed vehicle costs one unlit
+    # dot; a wrongly-lit dot costs nothing at all. That is the opposite of the
+    # trade in resolve_contact, where a guess would corrupt a real record — so
+    # heuristics are appropriate here and inappropriate there.
+
+    # Body styles and the makes common in this market. Not exhaustive, and does
+    # not need to be: an unrecognised car simply lights up at save time, exactly
+    # as everything did before.
+    _VEHICLE_WORDS = frozenset(
+        """
+        sedan suv hatchback hatch van truck pickup bike motorcycle jeep coupe
+        wagon estate minivan crossover saloon
+        toyota honda suzuki hyundai kia nissan mazda ford chevrolet chevy bmw
+        mercedes benz audi volkswagen vw tesla mitsubishi daihatsu changan mg
+        corolla civic city vitz alto mehran cultus wagonr swift yaris fortuner
+        prado land cruiser hilux revo sportage tucson picanto sonata elantra
+        """.split()
+    )
+
+    def _detect_vehicle(self, text: str) -> str | None:
+        """Spot a vehicle in what the customer just said."""
+        words = re.findall(r"[a-zA-Z]+", text.lower())
+        for i, word in enumerate(words):
+            if word in self._VEHICLE_WORDS:
+                # Keep the pair when it reads like make + model ("Honda Civic"),
+                # so the summary panel shows something a person recognises.
+                if i + 1 < len(words) and words[i + 1] in self._VEHICLE_WORDS:
+                    return f"{words[i].title()} {words[i + 1].title()}"
+                return "SUV" if word == "suv" else words[i].title()
+        return None
+
+    def _detect_service(self, text: str) -> str | None:
+        """Match against the owner's LIVE menu — no guessing required."""
+        lowered = text.lower()
+        for name in settings_store.service_names(self.settings):
+            if name.lower() in lowered:
+                return name
+        return None
+
+    _RELATIVE_DATES = ("today", "tomorrow", "tonight", "monday", "tuesday",
+                       "wednesday", "thursday", "friday", "saturday", "sunday")
+
+    def _detect_date(self, text: str) -> str | None:
+        """
+        Spot that a date was GIVEN. The displayed value is the customer's own
+        phrasing, not a resolved date: resolving "this Saturday" is the model's
+        job, and showing a date we resolved differently would be worse than
+        showing their words back to them.
+        """
+        lowered = text.lower()
+        iso = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+        if iso:
+            return iso.group(1)
+        for word in self._RELATIVE_DATES:
+            if re.search(rf"\b{word}\b", lowered):
+                return word.title()
+        # "on the 14th", "14 August"
+        day = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)\b", lowered)
+        if day:
+            return f"the {day.group(0)}"
+        return None
+
+    def _detect_time(self, text: str) -> str | None:
+        """Reuse the booking validator's own parser, so the two agree."""
+        lowered = text.lower()
+        for word in ("morning", "afternoon", "evening", "noon", "midday"):
+            if re.search(rf"\b{word}\b", lowered):
+                return word
+        # A bare number is only a time when it is written like one — "10:30",
+        # "4 pm". Plain "4" is far more likely to be a quantity or a date.
+        if re.search(r"\b\d{1,2}\s*[:.]\s*\d{2}\b", text) or re.search(
+            r"\b\d{1,2}\s*(am|pm)\b", lowered
+        ):
+            return validate.parse_time(text)
+        return None
+
+    def _detect_progress(self, text: str) -> None:
+        """Light up the slots this message revealed. Display only."""
+        for slot, found in (
+            ("vehicle_type", self._detect_vehicle(text)),
+            ("service_type", self._detect_service(text)),
+            ("preferred_date", self._detect_date(text)),
+            ("preferred_time", self._detect_time(text)),
+        ):
+            # Never overwrite a value the model already committed through the
+            # tool — that one is authoritative, this one is a guess.
+            if found and slot not in self.known_slots:
+                self.known_slots.add(slot)
+                self.captured[slot] = str(found)
+
     _PHONE_IN_TEXT = re.compile(r"\+?\d[\d\s\-().]{6,}\d")
 
     def _detect_phone(self, text: str) -> str | None:
@@ -874,6 +988,10 @@ class ConversationEngine:
             self.known_slots.add("customer_name")
             self.captured["customer_name"] = stated
             self._rebuild_prompt()
+
+        # Everything else the message revealed, so the progress the customer
+        # sees keeps pace with what they have actually told us.
+        self._detect_progress(user_message)
 
         # THE RECOGNITION MOMENT. If we don't yet know who this is and they
         # just said a number, look them up now — before the model composes its

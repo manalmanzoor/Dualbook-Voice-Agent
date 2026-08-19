@@ -846,16 +846,31 @@ function renderOutbox(rows,wa){
     return;
   }
   const tone={sent:['#F0FDF4','#15803D'],simulated:['#FFFBEB','#B45309'],
-              rejected:['#FDF2F8','#DB2777'],failed:['#FDF2F8','#DB2777']};
+              rejected:['#FDF2F8','#DB2777'],failed:['#FDF2F8','#DB2777'],
+              blocked:['#FEF2F2','#B91C1C']};
+  // Which WhatsApp shape carried the message. 'session' is free text, allowed
+  // only within 24h of the customer writing to us; 'template' is the approved
+  // wording, and the only thing that can reach someone who never messaged us.
+  // Shown because when a message does NOT arrive, this is the first thing to
+  // look at — and the two fail for completely different reasons.
+  const modeTip={
+    session:'Free text — they messaged us in the last 24 hours',
+    template:'Approved template — outside the 24-hour window',
+  };
   $('outboxList').innerHTML=rows.map(m=>{
     const [bg,fg]=tone[m.status]||['#F7F6FD','#6E6A8A'];
+    const mode=m.mode?`<span class="pill" title="${esc(modeTip[m.mode]||'')}"
+        style="background:#F1F5F9;color:#475569">${esc(m.mode)}</span>`:'';
     return `<div style="padding:10px 0;border-bottom:1px solid #f1f5f9">
       <div style="display:flex;gap:9px;align-items:center">
         <b style="font-size:13px">${esc(m.phone)}</b>
         <span class="pill" style="background:${bg};color:${fg}">${esc(m.status)}</span>
+        ${mode}
         <span style="margin-left:auto;font-size:11.5px;color:var(--muted)">${timeAgo(m.created_at)}</span>
       </div>
       <div style="font-size:12.5px;color:var(--muted);margin-top:4px">${esc((m.body||'').slice(0,110))}</div>
+      ${m.status==='blocked'&&m.detail
+        ? `<div style="font-size:11.5px;color:#B91C1C;margin-top:4px">${esc(m.detail)}</div>`:''}
     </div>`;
   }).join('');
 }

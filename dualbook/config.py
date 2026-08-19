@@ -70,7 +70,7 @@ VAPI_PHONE_NUMBER_ID = _get("VAPI_PHONE_NUMBER_ID")  # needed only for real call
 # at your free Groq key is what keeps the running cost to Vapi's own per-minute
 # fee instead of that plus model tokens.
 VAPI_LLM_PROVIDER = _get("VAPI_LLM_PROVIDER", "groq")
-VAPI_LLM_MODEL = _get("VAPI_LLM_MODEL", "llama-3.3-70b-versatile")
+VAPI_LLM_MODEL = _get("VAPI_LLM_MODEL", "openai/gpt-oss-120b")
 VAPI_VOICE_PROVIDER = _get("VAPI_VOICE_PROVIDER", "vapi")
 VAPI_VOICE_ID = _get("VAPI_VOICE_ID", "Elliot")
 VAPI_TRANSCRIBER_PROVIDER = _get("VAPI_TRANSCRIBER_PROVIDER", "deepgram")
@@ -91,6 +91,12 @@ META_WA_TOKEN = _get("META_WA_TOKEN")
 META_WA_PHONE_NUMBER_ID = _get("META_WA_PHONE_NUMBER_ID")
 META_WA_VERIFY_TOKEN = _get("META_WA_VERIFY_TOKEN")  # you invent this string
 META_WA_API_URL = _get("META_WA_API_URL", "https://graph.facebook.com/v21.0")
+# App secret from the Meta dashboard. Meta signs every webhook DELIVERY with it
+# (X-Hub-Signature-256), which is the only thing that proves a POST came from
+# Meta and not from whoever guessed your public URL. The verify token gates the
+# one-time subscription handshake and does nothing for individual messages —
+# these two are not interchangeable.
+META_WA_APP_SECRET = _get("META_WA_APP_SECRET")
 
 # --- WhatsApp (Whapi.Cloud) ---------------------------------------------------
 WHAPI_TOKEN = _get("WHAPI_TOKEN")
@@ -107,7 +113,7 @@ UPLIFT_ASSISTANT_ID = _get("UPLIFT_ASSISTANT_ID")
 # Uplift runs its own realtime LLM/STT/TTS stack; these pick the providers.
 # Groq by default here too — it's the free-tier option Uplift supports.
 UPLIFT_LLM_PROVIDER = _get("UPLIFT_LLM_PROVIDER", "groq")
-UPLIFT_LLM_MODEL = _get("UPLIFT_LLM_MODEL", "llama-3.3-70b-versatile")
+UPLIFT_LLM_MODEL = _get("UPLIFT_LLM_MODEL", "openai/gpt-oss-120b")
 UPLIFT_STT_PROVIDER = _get("UPLIFT_STT_PROVIDER", "deepgram")
 UPLIFT_STT_MODEL = _get("UPLIFT_STT_MODEL", "nova-2")
 UPLIFT_STT_LANGUAGE = _get("UPLIFT_STT_LANGUAGE", "en")

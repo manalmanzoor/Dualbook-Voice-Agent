@@ -80,9 +80,35 @@ class OpenAICompatibleClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.max_tokens = self.MAX_TOKENS
+        # Set to False once a provider tells us it doesn't accept the parameter.
+        self._send_reasoning_param = True
         # Smaller models on the same provider, tried in order if `model` runs
         # out of daily quota. See _downgrade_model.
         self.fallbacks = list(fallbacks or [])
+
+
+    # A booking reply is one or two sentences. 1024 was ample for that — and far
+    # too little for a REASONING model, which spends the same budget thinking
+    # before it writes anything. qwen3 was observed burning all 1024 tokens on
+    # hidden reasoning and returning EMPTY content with finish_reason='length',
+    # which surfaced to the customer as "Sorry, could you say that again?" on
+    # every turn, forever. Two defences below, because that failure is silent.
+    MAX_TOKENS = 2048
+
+    # Models whose "thinking" is pure cost here. Slot filling is not a reasoning
+    # task: the work is capturing what the customer said and calling one tool.
+    # Turning it off cut a turn from ~300 completion tokens to ~15, and tool
+    # calling was verified unaffected.
+    _NO_REASONING_MODELS = ("qwen",)
+
+    def _reasoning_params(self) -> dict[str, Any]:
+        """Ask for no chain-of-thought, where the model understands the request."""
+        if not self._send_reasoning_param:
+            return {}
+        if any(tag in self.model.lower() for tag in self._NO_REASONING_MODELS):
+            return {"reasoning_effort": "none"}
+        return {}
 
     def complete(
         self,
@@ -100,7 +126,8 @@ class OpenAICompatibleClient:
             # Low temperature: slot filling wants consistent, literal capture of
             # what the customer said, not creative paraphrasing of their name.
             "temperature": 0.3,
-            "max_tokens": 1024,
+            "max_tokens": self.max_tokens,
+            **self._reasoning_params(),
         }
         if tools:
             body["tools"] = [
@@ -122,6 +149,31 @@ class OpenAICompatibleClient:
         data = response.json()
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
+
+        # Ran out of budget before saying anything. Without this the turn
+        # returns nothing and the agent falls back to "Sorry, could you say that
+        # again?" — every turn, with no clue why. One retry with real headroom.
+        # Note this fires on a PARTIAL answer too, not only an empty one: a reply
+        # cut off as "Thanks, Kunal. I've" is sent to the customer mid-sentence,
+        # which is worse than a short pause while we ask again properly.
+        if (
+            choice.get("finish_reason") == "length"
+            and not message.get("tool_calls")
+        ):
+            widened = min(self.max_tokens * 4, 8192)
+            log.warning(
+                "%s ran out of room at %d tokens (answer was %s) — retrying with %d",
+                self.model, self.max_tokens,
+                "empty" if not (message.get("content") or "").strip() else "cut off",
+                widened,
+            )
+            body["max_tokens"] = widened
+            response = self._post_with_retry(
+                f"{self.base_url}/chat/completions", headers, body
+            )
+            data = response.json()
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
 
         tool_calls: list[ToolCall] = []
         for raw in message.get("tool_calls") or []:
@@ -194,6 +246,30 @@ class OpenAICompatibleClient:
 
             last_error = response.text[:400]
             retryable = response.status_code == 429 or response.status_code >= 500
+
+            # A malformed tool call is the model's mistake, and a re-roll
+            # usually produces a valid one. Treating it as fatal ends the
+            # booking over something that fixes itself on the next attempt.
+            if (
+                response.status_code == 400
+                and "reasoning_effort" in last_error
+                and self._send_reasoning_param
+            ):
+                # An optimisation must never be the reason a booking fails.
+                log.warning(
+                    "%s does not accept reasoning_effort — dropping it and retrying",
+                    self.model,
+                )
+                self._send_reasoning_param = False
+                body.pop("reasoning_effort", None)
+                continue
+
+            if response.status_code == 400 and "tool_use_failed" in last_error:
+                log.warning(
+                    "Model emitted off-schema tool arguments — re-rolling "
+                    "(attempt %d/%d)", attempt + 1, self.MAX_RETRIES,
+                )
+                retryable = True
 
             if not retryable or attempt == self.MAX_RETRIES - 1:
                 log.error("LLM call failed %s: %s", response.status_code, last_error)
@@ -446,11 +522,11 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "key_env": "GROQ_API_KEY",
-        "default_model": "llama-3.3-70b-versatile",
+        "default_model": "qwen/qwen3.6-27b",
         # Free-tier quotas are metered PER MODEL, so a smaller sibling is a real
         # escape hatch when the big one runs dry mid-demo. Both still do
         # function calling, which is the one capability slot filling requires.
-        "fallbacks": ["llama-3.1-8b-instant", "openai/gpt-oss-20b"],
+        "fallbacks": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
         "requires_key": True,
         "signup": "https://console.groq.com/keys",
     },

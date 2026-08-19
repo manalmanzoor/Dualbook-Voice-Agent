@@ -38,6 +38,27 @@ from . import settings_store
 MIN_DIGITS = 8
 MAX_DIGITS = 15
 
+# How many digits follow the country code, per country we actually serve.
+#
+# The generic 8-digit floor above is a backstop for countries we don't know, and
+# it is far too loose for one we do: speech recognition heard "03124 567" and
+# that passed as +923124567, nine digits, three short of any real Pakistani
+# number. It would have reached the customer's booking as a contact nobody can
+# call. Length is the only cheap check that catches a plausible-looking
+# mis-transcription, so it is worth being specific where we can be.
+#
+# Pakistani mobiles are 03XX-XXXXXXX and landlines 0XX-XXXXXXXX; both are ten
+# digits once the leading 0 is replaced by the country code.
+_NSN_LENGTHS: dict[str, set[int]] = {
+    "92": {10},        # Pakistan
+    "1": {10},         # US / Canada
+    "44": {10},        # UK
+    "91": {10},        # India
+    "971": {8, 9},     # UAE
+    "966": {9},        # Saudi Arabia
+    "880": {10},       # Bangladesh
+}
+
 
 @dataclass
 class Result:
@@ -100,6 +121,24 @@ def phone(raw: str, default_country: str | None = None) -> Result:
         return Result(False, reason=f"{raw!r} is too short to be a phone number.")
     if len(digits) > MAX_DIGITS:
         return Result(False, reason=f"{raw!r} has too many digits to be dialable.")
+
+    # Where we know the country, check the number is the right LENGTH for it.
+    # Longest matching prefix first, so "971" wins over "97" if both were listed.
+    for code in sorted(_NSN_LENGTHS, key=len, reverse=True):
+        if digits.startswith(code):
+            expected = _NSN_LENGTHS[code]
+            actual = len(digits) - len(code)
+            if actual not in expected:
+                want = " or ".join(str(n) for n in sorted(expected))
+                return Result(
+                    False,
+                    reason=(
+                        f"{raw!r} is not a complete number — +{code} numbers have "
+                        f"{want} digits after the country code, this has {actual}. "
+                        "Ask them to repeat it digit by digit."
+                    ),
+                )
+            break
     if len(set(digits)) <= 2:
         # 0000000000 / 1212121212 — passes every length check, reaches no one.
         return Result(False, reason=f"{raw!r} does not look like a real number.")
@@ -162,15 +201,22 @@ def booking_slot(
     preferred_time: str,
     settings: dict[str, Any] | None = None,
     today: date | None = None,
+    now: datetime | None = None,
 ) -> Result:
     """
     Is this date+time something the business can actually honour?
 
     Checks, in the order a person would: is it a real date, is it in the past,
-    is it too far out, are we open that day, are we open at that time.
+    is it too far out, are we open that day, are we open at that time, and —
+    if it is today — has that time already gone by.
+
+    `now` is injectable so the past-time rule can be tested at a fixed instant.
+    Without it a test asserting "09:00 today is rejected" would pass all evening
+    and fail every morning, which is worse than no test at all.
     """
     settings = settings or settings_store.get()
-    today = today or date.today()
+    now = now or datetime.now()
+    today = today or now.date()
 
     text = str(preferred_date or "").strip()
     try:
@@ -223,5 +269,28 @@ def booking_slot(
             reason=f"{clock} is outside our {label} hours "
                    f"({day['open']}–{day['close']}). Offer a time inside them.",
         )
+
+    # A time that has already gone by TODAY. The date check above cannot catch
+    # this: "today at 9am" said at 6pm is a perfectly valid future-or-present
+    # date, and without this it books a slot that is ten hours gone.
+    #
+    # Compared against `now.date()` rather than `today` on purpose — a caller
+    # that fakes `today` for a different reason must not have real wall-clock
+    # time applied to a date it never meant to be today.
+    if when == now.date():
+        current = now.strftime("%H:%M")
+        if clock <= current:
+            # Is anything left today, or should the agent move to another day?
+            if current < day["close"]:
+                hint = (
+                    f"It is already {current}. We are open until {day['close']} "
+                    f"today, so offer a time after {current} — or another day."
+                )
+            else:
+                hint = (
+                    f"It is already {current} and we close at {day['close']}, so "
+                    "there are no slots left today. Offer the next open day."
+                )
+            return Result(False, reason=f"{clock} today has already passed. {hint}")
 
     return Result(True, value=f"{when.isoformat()} {clock}")

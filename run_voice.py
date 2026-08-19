@@ -1,6 +1,6 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """
-DualBook â€” Voice booking agent (Component 2), on Uplift AI Realtime Assistants.
+DualBook — Voice booking agent (Component 2), on Uplift AI Realtime Assistants.
 
     python run_voice.py provision                    # create/update the assistant
     python run_voice.py session +923001234567        # mint a session (memory pre-loaded)
@@ -14,7 +14,7 @@ Uplift runs the realtime loop (STT -> LLM -> TTS) on its side and connects the
 caller over WebRTC/LiveKit. Tools are NOT server-side webhooks: Uplift invokes
 them by RPC against a participant in the room. So to capture the booking we
 join the room as a Python participant and register `save_booking`, which calls
-straight into booking_core.complete_booking â€” the same function the WhatsApp
+straight into booking_core.complete_booking — the same function the WhatsApp
 agent's tool handler calls. No business rule is duplicated.
 
 The per-caller memory profile is injected via an ADHOC session, because a
@@ -53,7 +53,7 @@ def voice_instructions(phone: str | None) -> str:
     Build the voice agent's instructions.
 
     PRE-LOAD READ happens here: one indexed SQLite lookup at session-creation
-    time, folded into the system prompt. Nothing is retrieved per turn â€” on a
+    time, folded into the system prompt. Nothing is retrieved per turn — on a
     call, a retrieval round-trip would land inside the caller's perceived pause.
     """
     profile = memory.load_profile(phone) if phone else None
@@ -61,7 +61,7 @@ def voice_instructions(phone: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# provision â€” create or update the persisted assistant
+# provision — create or update the persisted assistant
 # ---------------------------------------------------------------------------
 
 
@@ -88,7 +88,7 @@ def provision() -> int:
 
 
 # ---------------------------------------------------------------------------
-# session â€” mint a session token for a specific caller
+# session — mint a session token for a specific caller
 # ---------------------------------------------------------------------------
 
 
@@ -103,7 +103,7 @@ def create_session(
 
     ADHOC IS THE DEFAULT, and that is a memory-layer decision rather than a
     stylistic one. A persisted assistant holds ONE instruction string shared by
-    every caller, so it cannot contain "Ali", "SUV" or "Premium Wash" â€” it is
+    every caller, so it cannot contain "Ali", "SUV" or "Premium Wash" — it is
     structurally incapable of greeting a returning caller by name. The adhoc
     endpoint takes the config inline per session, which is the only place the
     caller's profile can be injected. See MEMORY_DESIGN.md.
@@ -147,7 +147,7 @@ def session_command(
         use_persisted=use_persisted,
         room_name=room_name,
         # A tool host is a second, non-speaking participant, so give it a
-        # distinct identity â€” LiveKit rejects two participants sharing one.
+        # distinct identity — LiveKit rejects two participants sharing one.
         participant_name="dualbook-tool-host" if (join and room_name) else None,
     )
 
@@ -178,7 +178,7 @@ def session_command(
 
 
 # ---------------------------------------------------------------------------
-# join â€” act as the room participant that hosts the booking tool
+# join — act as the room participant that hosts the booking tool
 # ---------------------------------------------------------------------------
 
 
@@ -204,7 +204,7 @@ async def join_room(session, phone: str) -> int:
 
     In topology 2 the agent must direct the RPC at this participant. If your
     client also registers `save_booking`, drop the tool host and let the client
-    own it â€” but the handler still has to call booking_core.complete_booking,
+    own it — but the handler still has to call booking_core.complete_booking,
     or the voice channel forks away from the shared booking path.
     """
     try:
@@ -357,7 +357,7 @@ def _extract_rpc_arguments(rpc_data: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# serve â€” backend token endpoint (the production shape)
+# serve — backend token endpoint (the production shape)
 # ---------------------------------------------------------------------------
 
 
@@ -367,7 +367,7 @@ def serve(host: str, port: int) -> int:
 
     Uplift's docs are explicit: "Never expose your API key in client-side code.
     Always create sessions from your backend server." This endpoint is that
-    backend â€” the client sends a phone number and gets back only a scoped,
+    backend — the client sends a phone number and gets back only a scoped,
     short-lived room token.
     """
     from fastapi import FastAPI
@@ -411,7 +411,7 @@ def serve(host: str, port: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# simulate â€” same booking logic, typed instead of spoken
+# simulate — same booking logic, typed instead of spoken
 # ---------------------------------------------------------------------------
 
 
@@ -452,7 +452,7 @@ def simulate(phone: str, speak: bool = False, listen: bool = False) -> int:
     separate dependency, and it's the half a real call provider actually sells.
 
     This uses the voice system prompt and the voice channel tag, so bookings
-    land in the store marked `channel='voice'` â€” useful for demoing the shared
+    land in the store marked `channel='voice'` — useful for demoing the shared
     memory layer across both channels without provisioning telephony.
     """
     store.init_db()
@@ -493,7 +493,7 @@ def simulate(phone: str, speak: bool = False, listen: bool = False) -> int:
     print("Type what the caller says. Ctrl-C or 'quit' to exit.\n")
 
     # A network blip shouldn't dump a 60-line traceback at someone who is just
-    # trying to talk to the agent â€” say what happened and stay usable.
+    # trying to talk to the agent — say what happened and stay usable.
     try:
         greeting = engine.greet()
         print(f"agent> {greeting}\n")
@@ -522,7 +522,7 @@ def simulate(phone: str, speak: bool = False, listen: bool = False) -> int:
         except llm.LLMError as exc:
             # Keep the transcript: the customer can just say it again.
             print(f"\n[agent unavailable] {exc}\n"
-                  "Your conversation is intact â€” type your message again.\n",
+                  "Your conversation is intact — type your message again.\n",
                   file=sys.stderr)
             continue
 

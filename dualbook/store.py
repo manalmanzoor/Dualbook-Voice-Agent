@@ -102,10 +102,24 @@ CREATE TABLE IF NOT EXISTS outbox (
     channel    TEXT    NOT NULL,        -- 'whatsapp'
     kind       TEXT    NOT NULL,        -- 'booking_confirmation' | 'test'
     body       TEXT    NOT NULL,
-    status     TEXT    NOT NULL,        -- sent | simulated | failed | rejected
+    status     TEXT    NOT NULL,        -- sent | simulated | failed | rejected | blocked
     detail     TEXT,                    -- provider id, or why it failed
     booking_id INTEGER,
     created_at TEXT    NOT NULL
+);
+
+-- When each number last messaged US. This exists for exactly one reason: Meta
+-- only permits free-form ("session") messages within 24 hours of the customer's
+-- last inbound message. Outside that window a message must be a pre-approved
+-- TEMPLATE, and sending the wrong shape is rejected by Meta at the API.
+--
+-- Deliberately NOT a column on `customers`: that table is the memory profile,
+-- and memory.py is explicit that it holds only facts which shorten a future
+-- booking. "When did this number last text us" is transport bookkeeping, not
+-- something the agent should ever reason about. Separate concern, separate table.
+CREATE TABLE IF NOT EXISTS wa_contacts (
+    phone           TEXT PRIMARY KEY,
+    last_inbound_at TEXT NOT NULL
 );
 """
 
@@ -116,6 +130,13 @@ _ADDED_COLUMNS = {
     "bookings": {
         "status": "TEXT NOT NULL DEFAULT 'confirmed'",
         "turns": "INTEGER",
+    },
+    "outbox": {
+        # Which WhatsApp message shape was used: 'session' (free text) or
+        # 'template'. Recorded because the two fail for completely different
+        # reasons, and "it failed" without knowing which was attempted sends
+        # you looking in the wrong place.
+        "mode": "TEXT",
     },
 }
 
@@ -509,18 +530,60 @@ def record_outbound(
     channel: str = "whatsapp",
     detail: str | None = None,
     booking_id: int | None = None,
+    mode: str | None = None,
     db_path: str | None = None,
 ) -> int:
     with connect(db_path) as conn:
         cur = conn.execute(
             """
             INSERT INTO outbox (phone, channel, kind, body, status, detail,
-                                booking_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                booking_id, mode, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (phone, channel, kind, body, status, detail, booking_id, _now()),
+            (phone, channel, kind, body, status, detail, booking_id, mode, _now()),
         )
         return int(cur.lastrowid)
+
+
+# --- Inbound contact timestamps (the 24-hour session window) ------------------
+
+
+def record_inbound(phone: str, db_path: str | None = None) -> None:
+    """
+    Note that this number just messaged us, opening a 24-hour session window.
+
+    Called on every inbound WhatsApp message. Cheap enough to do unconditionally:
+    one indexed upsert against a two-column table.
+    """
+    if not phone:
+        return
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO wa_contacts (phone, last_inbound_at) VALUES (?, ?)
+            ON CONFLICT(phone) DO UPDATE SET last_inbound_at = excluded.last_inbound_at
+            """,
+            (phone, _now()),
+        )
+
+
+def last_inbound_at(phone: str, db_path: str | None = None) -> datetime | None:
+    """When this number last messaged us, or None if it never has."""
+    if not phone:
+        return None
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT last_inbound_at FROM wa_contacts WHERE phone = ?", (phone,)
+        ).fetchone()
+    if not row or not row["last_inbound_at"]:
+        return None
+    try:
+        parsed = datetime.fromisoformat(row["last_inbound_at"])
+    except ValueError:
+        return None
+    # Rows are written by _now() in UTC, but a naive value read back from an
+    # older file would compare wrongly against an aware "now" — so normalise.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def list_outbound(limit: int = 25, db_path: str | None = None) -> list[dict[str, Any]]:

@@ -1089,26 +1089,105 @@ function finish(label){
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 let rec=null, listening=false, silence=0;
 
+/* Voice selection.
+   getVoices() is EMPTY on the first call in every browser - the list loads
+   asynchronously and fires 'voiceschanged' when ready. Reading it once, inline,
+   meant the very first thing the assistant said always used the default robotic
+   voice. So we cache, and re-pick when the list arrives. */
+let TTS_VOICE=null, VOICES_READY=false;
+
+/* Ranked, not first-match. The old code took the first name matching a list
+   that included "zira" - Windows' old robotic SAPI voice, which sorts before
+   the good ones, so it won every time. Score instead, highest wins. */
+function scoreVoice(v){
+  if(!/^en/i.test(v.lang)) return -1;
+  const n=v.name.toLowerCase();
+  let s=0;
+  if(/natural|neural/.test(n))            s+=100;  // Edge's neural voices
+  if(/google/.test(n))                    s+=60;   // Chrome's, also good
+  if(/aria|jenny|libby|sonia|emma|ava/.test(n)) s+=25;  // warmer defaults
+  if(/zira|david|mark|hazel/.test(n))     s-=30;   // legacy SAPI, robotic
+  if(/en-gb|en-us/i.test(v.lang))         s+=5;
+  if(v.localService===false)              s+=10;   // online = higher quality
+  return s;
+}
+
+function pickVoice(){
+  const voices=window.speechSynthesis.getVoices();
+  if(!voices.length) return null;
+  VOICES_READY=true;
+  return voices.map(v=>({v,s:scoreVoice(v)}))
+               .filter(x=>x.s>=0)
+               .sort((a,b)=>b.s-a.s)
+               .map(x=>x.v)[0]||null;
+}
+
+if(window.speechSynthesis){
+  TTS_VOICE=pickVoice();
+  // Fires once the list is populated; without this the first utterance is stuck
+  // with whatever the browser defaults to.
+  window.speechSynthesis.onvoiceschanged=()=>{ TTS_VOICE=pickVoice(); };
+}
+
 function speak(text,done){
   if(!window.speechSynthesis){ done&&done(); return; }
   window.speechSynthesis.cancel();
+  if(!TTS_VOICE||!VOICES_READY) TTS_VOICE=pickVoice();
   const u=new SpeechSynthesisUtterance(text);
-  u.rate=1.02;
-  const voices=window.speechSynthesis.getVoices();
-  const pick=voices.find(v=>/^en/i.test(v.lang)&&/female|zira|aria|libby|natural/i.test(v.name))
-           ||voices.find(v=>/^en/i.test(v.lang));
-  if(pick) u.voice=pick;
+  /* Warmer delivery: a touch under real-time reads as considered rather than
+     hurried, and a slightly raised pitch reads as friendly rather than flat.
+     Both are deliberately small - overdone, it sounds like a cartoon. */
+  u.rate=0.97;
+  u.pitch=1.08;
+  u.volume=1;
+  if(TTS_VOICE) u.voice=TTS_VOICE;
   mode('hot','Speaking…');
   u.onend=()=>done&&done(); u.onerror=()=>done&&done();   // never strand the call
   window.speechSynthesis.speak(u);
 }
 
+/* Recognition language. en-US mishears South Asian English badly - "Minal"
+   came back as "Kunal". en-IN is trained on South Asian phonology and is much
+   closer for both names and digits. Change this if your customers speak
+   something else; it is the single biggest lever on recognition quality. */
+const SR_LANG='en-IN';
+
+/* Spoken digits often arrive as words, or as words mixed with digits. The
+   number is the one field where a near-miss is useless, so normalise before
+   anything tries to read it. */
+const NUMBER_WORDS={zero:'0',oh:'0',o:'0',one:'1',two:'2',three:'3',four:'4',
+  five:'5',six:'6',seven:'7',eight:'8',nine:'9',double:'',triple:''};
+function digitsFromWords(s){
+  return s.toLowerCase().split(/[\s,-]+/)
+    .map(w=>w in NUMBER_WORDS?NUMBER_WORDS[w]:w).join('');
+}
+
+/* Pick the best of the alternatives the recogniser offers.
+   It returns them ranked by ITS confidence, which is about acoustics and knows
+   nothing about what we asked for. When we are waiting on a phone number, an
+   alternative carrying a full-length number beats a better-sounding one that
+   dropped three digits - which is exactly how "03124 567" got accepted. */
+function bestTranscript(result){
+  const alts=[...result].map(a=>a.transcript.trim()).filter(Boolean);
+  if(!alts.length) return '';
+  const needsNumber=!(STATE.slots||[]).includes('contact_details');
+  if(needsNumber){
+    const full=alts.find(a=>{
+      const d=digitsFromWords(a).replace(/\D/g,'');
+      return d.length>=10 && d.length<=13;    // a complete local or E.164 number
+    });
+    if(full) return full;
+  }
+  return alts[0];
+}
+
 function listen(){
   if(!SR||!LIVE||BUSY||listening){ if(LIVE&&!SR) mode('on','Your turn — type below'); return; }
-  rec=new SR(); rec.lang='en-US'; rec.interimResults=false; rec.continuous=false;
+  rec=new SR(); rec.lang=SR_LANG; rec.interimResults=false; rec.continuous=false;
+  rec.maxAlternatives=5;   // needed for bestTranscript to have anything to choose from
   rec.onstart=()=>{ listening=true; mode('hot','Listening…'); $('micBtn').classList.add('live'); };
   rec.onresult=e=>{
-    const heard=[...e.results].map(r=>r[0].transcript).join(' ').trim();
+    const heard=[...e.results].map(r=>bestTranscript(r)).join(' ').trim();
     stopListening(); silence=0;
     heard?send(heard):listen();
   };

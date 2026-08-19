@@ -435,10 +435,36 @@ def doctor() -> int:
             ("META_WA_TOKEN", config.META_WA_TOKEN),
             ("META_WA_PHONE_NUMBER_ID", config.META_WA_PHONE_NUMBER_ID),
             ("META_WA_VERIFY_TOKEN", config.META_WA_VERIFY_TOKEN),
+            ("META_WA_APP_SECRET", config.META_WA_APP_SECRET),
         ):
             print(f"  [{'OK  ' if value else 'MISS'}] {name}")
+        if not config.META_WA_APP_SECRET:
+            print("         -> webhook signatures NOT checked: anyone who finds")
+            print("            your URL can POST fake bookings. App settings ->")
+            print("            Basic -> App secret.")
+
+        # Templates: the difference between confirming a voice booking and
+        # silently not confirming it.
+        from dualbook import wa_templates
+
+        declared = wa_templates.describe()
+        by_kind = {t["kind"]: t for t in declared}
+        confirm = by_kind.get("booking_confirmation")
+        print(f"  [{'OK  ' if confirm else 'MISS'}] template: booking_confirmation")
+        if confirm:
+            print(f"         -> {confirm['name']} ({confirm['language']}), "
+                  f"{len(confirm['variables'])} variables")
+            print("         -> must be APPROVED in Meta, not just declared here")
+        else:
+            print("         -> without it, confirmations for PHONE bookings are")
+            print("            blocked: the caller never messaged us, so free")
+            print("            text is not allowed. See SETUP.md.")
     else:
         print(f"  [{'OK  ' if config.WHAPI_TOKEN else 'MISS'}] WHAPI_TOKEN")
+        if not config.WHAPI_WEBHOOK_SECRET:
+            print("  [MISS] WHAPI_WEBHOOK_SECRET")
+            print("         -> webhook not authenticated; add it as an")
+            print("            X-Webhook-Secret header on the Whapi webhook.")
 
     print()
     return 1 if missing_required else 0

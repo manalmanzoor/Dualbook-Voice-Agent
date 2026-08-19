@@ -4,9 +4,10 @@ Seed script — creates returning customers, a week of booking history, and two
 in-flight conversations so the personalisation and the dashboard can both be
 demoed without completing a real booking first.
 
-    python demo_data.py            # seed
-    python demo_data.py --reset    # wipe everything, then seed
-    python demo_data.py --minimal  # just the one returning customer (Ali)
+    python demo_data.py              # seed
+    python demo_data.py --reset      # wipe everything, then seed
+    python demo_data.py --minimal    # just the one returning customer (Ali)
+    python demo_data.py --clear-demo # remove the seeded rows, KEEP real bookings
 
 After seeding:
 
@@ -103,6 +104,54 @@ def reset() -> None:
         conn.execute("DELETE FROM customers")
         conn.execute("DELETE FROM conversations")
     print("Cleared bookings, customers and conversations.")
+
+
+def clear_demo() -> int:
+    """
+    Remove ONLY the seeded customers, leaving real bookings untouched.
+
+    `--reset` deletes everything, which is right before a demo and badly wrong
+    once the agent has taken genuine bookings. This targets the numbers declared
+    in CUSTOMERS above — the only rows this script ever created — so the
+    dashboard drops to showing real business and nothing else.
+
+    A backup is written first. Deleting someone's booking history on the
+    strength of a phone-number match is not something to do without a way back.
+    """
+    import shutil
+    from pathlib import Path
+
+    from dualbook import config
+
+    db = Path(config.DB_PATH)
+    backup = db.with_suffix(f".backup-{datetime.now():%Y%m%d-%H%M%S}.db")
+    if db.exists():
+        shutil.copy2(db, backup)
+        print(f"Backup written to {backup.name}")
+
+    phones = [DEMO_PHONE] + [c[0] for c in CUSTOMERS]
+    phones += ["+923339998877"]  # the "new customer" used by the live-panel demo
+    seen: set[str] = set()
+    unique = [p for p in phones if not (p in seen or seen.add(p))]
+    marks = ",".join("?" for _ in unique)
+
+    removed: dict[str, int] = {}
+    with store.connect() as conn:
+        for table in ("bookings", "customers", "conversations", "outbox", "wa_contacts"):
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE phone IN ({marks})", unique
+            )
+            removed[table] = cur.rowcount
+
+    total = sum(removed.values())
+    print(f"Removed {total} seeded row(s) across {len(unique)} demo numbers:")
+    for table, count in removed.items():
+        if count:
+            print(f"  {table:15} {count}")
+    with store.connect() as conn:
+        left = conn.execute("SELECT COUNT(*) FROM bookings").fetchone()[0]
+    print(f"\n{left} real booking(s) kept.")
+    return total
 
 
 def seed_minimal() -> None:
@@ -261,11 +310,20 @@ def main() -> int:
         help="fill turns/status on already-seeded rows, add nothing new "
         "(run this once after upgrading an existing database)",
     )
+    parser.add_argument(
+        "--clear-demo",
+        action="store_true",
+        help="remove the seeded demo customers and KEEP real bookings "
+        "(backs the database up first)",
+    )
     args = parser.parse_args()
 
     store.init_db()
     if args.backfill:
         backfill()
+        return 0
+    if args.clear_demo:
+        clear_demo()
         return 0
     if args.reset:
         reset()

@@ -45,6 +45,13 @@ harder, and they are what a business owner is actually buying:
    confirmation — sent or merely simulated — is recorded in an outbox the owner
    can read.
 
+> **TODO before live WhatsApp delivery:** confirmations for bookings taken by
+> *phone* go to a number that never messaged us, which WhatsApp only permits as
+> a pre-approved **template**. The send path already picks the right shape; the
+> template still has to be registered and approved in Meta's dashboard. Six-step
+> checklist: [SETUP.md → Message templates](SETUP.md). Until then those sends
+> are recorded as `blocked` with the reason, and everything else is unaffected.
+
 **New here?** [SETUP.md](SETUP.md) covers exactly which API keys you need (one
 free one is enough) and where your data is saved.
 
@@ -144,6 +151,8 @@ message/speech ──► LLM with the save_booking tool
 | `dualbook/settings_store.py` | Business configuration the owner edits and the agent obeys |
 | `dualbook/validate.py` | Phone numbers (E.164) and booking slots vs opening hours — the checks that actually hold |
 | `dualbook/notify.py` | Outbound WhatsApp confirmations, with the outbox that records what was (or would be) sent |
+| `dualbook/wa_templates.py` | Loads and validates the approved message templates used outside the 24-hour window |
+| `dualbook/templates/whatsapp.json` | Where you declare template name, language code and variables — edit this, not the code |
 | `dualbook/analytics.py` | Read-only aggregates that feed the dashboard |
 | `dualbook/booking_core.py` | Shared slot filling, tool contract, prompt, `complete_booking()` |
 | `dualbook/memory.py` | Customer memory: schema, pre-load read, post-processing write |
@@ -246,8 +255,8 @@ below are the *other* transports — real WhatsApp messages and real phone calls
 which reach the identical booking logic.
 
 > **Free-tier note.** Groq meters quota per model. If the default
-> (`llama-3.3-70b-versatile`) hits its daily cap mid-demo, the client
-> automatically drops to `llama-3.1-8b-instant` and carries on, logging the
+> (`openai/gpt-oss-120b`) hits its daily cap mid-demo, the client
+> automatically drops to `openai/gpt-oss-20b` and carries on, logging the
 > switch. Pin a model with `LLM_MODEL=` in `.env` to disable that.
 
 ### 1. Seed the demo customer
