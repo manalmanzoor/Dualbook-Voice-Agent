@@ -563,3 +563,11 @@ Checked against the live free-tier model, in a real browser:
   than a frontier model. `booking_core` re-validates required slots server-side
   before writing, so a premature tool call is rejected with a message the model
   can recover from rather than persisting a half-filled booking.
+
+  ## 👩‍💻 Author
+
+**Manal Manzoor**<br>
+Software Engineering Student<br>
+COMSATS University Islamabad, Wah Campus
+
+GitHub: [@manalmanzoor](https://github.com/manalmanzoor)
